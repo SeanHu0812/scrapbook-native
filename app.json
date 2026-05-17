@@ -2,18 +2,21 @@
   "expo": {
     "name": "scrapbook-native",
     "slug": "scrapbook-native",
+    "scheme": "scrapbook",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "backgroundColor": "#F2E9D6",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#F2E9D6"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.scrapbook-native"
     },
     "android": {
       "adaptiveIcon": {
@@ -27,7 +30,10 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-router",
+      "expo-secure-store",
+      "@react-native-community/datetimepicker"
     ]
   }
 }

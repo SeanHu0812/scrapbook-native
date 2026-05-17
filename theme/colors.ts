@@ -1,0 +1,16 @@
+export const colors = {
+  cream: '#FFF9EF',
+  paper: '#F2E9D6',
+  coral: '#F98592',
+  pink: '#F47D8E',
+  ink: '#2F2A28',
+  brown: '#6C5A4E',
+  border: '#E8DCCB',
+  blue: '#CFE9FA',
+  yellow: '#FFEAB6',
+  green: '#CFE8C9',
+  pinkSoft: '#FCE4E7',
+  blueSoft: '#E5F2FB',
+  yellowSoft: '#FFF3D1',
+  greenSoft: '#E2F0DD',
+};
