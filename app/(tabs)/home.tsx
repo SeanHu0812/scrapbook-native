@@ -96,7 +96,7 @@ export default function HomeScreen() {
         {/* Daily question */}
         <TouchableOpacity
           style={isSolo ? styles.cardMtSmall : styles.cardMt}
-          onPress={() => router.push("/(tabs)/calendar")}
+          onPress={() => router.push("/daily-question")}
           activeOpacity={0.9}
         >
           <Card tint="blue" style={styles.questionCard}>
@@ -118,7 +118,7 @@ export default function HomeScreen() {
         {/* Todo card */}
         <TouchableOpacity
           style={styles.cardMtSmall}
-          onPress={() => router.push("/(tabs)/calendar")}
+          onPress={() => router.push("/todos")}
           activeOpacity={0.9}
         >
           <Card tint="green" style={styles.todoCard}>
