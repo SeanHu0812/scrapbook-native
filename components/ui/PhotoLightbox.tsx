@@ -11,6 +11,12 @@ import { colors } from "@/theme/colors";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
+const THUMB_SIZE = 52;
+const THUMB_GAP = 3;
+const THUMB_STRIDE = THUMB_SIZE + THUMB_GAP;
+const FILMSTRIP_H = THUMB_SIZE + 14; // 7px top/bottom padding
+const TOOLBAR_INNER = 42;            // icon row height, before safe area
+
 export interface LightboxPhoto {
   url: string;
   storageId?: string;
@@ -32,17 +38,26 @@ export function PhotoLightbox({
   favorited, onFavorite, onSendComment, memoryTitle,
 }: PhotoLightboxProps) {
   const insets = useSafeAreaInsets();
-  const listRef = useRef<FlatList>(null);
+  const listRef    = useRef<FlatList>(null);
+  const filmRef    = useRef<FlatList>(null);
   const commentRef = useRef<TextInput>(null);
 
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const [downloading, setDownloading] = useState(false);
-  const [commentOpen, setCommentOpen] = useState(false);
-  const [commentText, setCommentText] = useState("");
-  const [sending, setSending] = useState(false);
+  const [currentIndex, setCurrentIndex]   = useState(initialIndex);
+  const [downloading, setDownloading]     = useState(false);
+  const [commentOpen, setCommentOpen]     = useState(false);
+  const [commentText, setCommentText]     = useState("");
+  const [sending, setSending]             = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  // Keyboard height tracking — drives comment bar position
+  // Total chrome height sitting at the bottom (filmstrip + toolbar + safe area)
+  const chromeHeight = FILMSTRIP_H + TOOLBAR_INNER + insets.bottom;
+
+  // Comment bar sits just above the chrome when keyboard hidden,
+  // or just above the keyboard when it's visible.
+  const commentBarBottom = keyboardHeight > 0 ? keyboardHeight : chromeHeight;
+
+  // ── Keyboard tracking ─────────────────────────────────────────────────────
+
   useEffect(() => {
     const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
@@ -51,7 +66,8 @@ export function PhotoLightbox({
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  // Reset comment state when lightbox closes
+  // ── Reset on close ───────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!visible) {
       setCommentOpen(false);
@@ -60,22 +76,38 @@ export function PhotoLightbox({
     }
   }, [visible]);
 
-  // Sync scroll position when lightbox opens at a specific index
+  // ── Sync scroll when lightbox opens ──────────────────────────────────────
+
   useEffect(() => {
     if (!visible) return;
     setCurrentIndex(initialIndex);
-    if (initialIndex > 0) {
-      const t = setTimeout(() => {
+    const t = setTimeout(() => {
+      if (initialIndex > 0) {
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false });
-      }, 50);
-      return () => clearTimeout(t);
-    }
+      }
+      filmRef.current?.scrollToIndex({ index: initialIndex, animated: false });
+    }, 50);
+    return () => clearTimeout(t);
   }, [visible, initialIndex]);
+
+  // ── Scroll filmstrip when current index changes ───────────────────────────
 
   const currentIndexRef = useRef(currentIndex);
   currentIndexRef.current = currentIndex;
 
+  useEffect(() => {
+    if (photos.length < 2) return;
+    filmRef.current?.scrollToIndex({
+      index: currentIndex,
+      animated: true,
+      viewPosition: 0.5,
+    });
+  }, [currentIndex, photos.length]);
+
+  // ── FlatList helpers ──────────────────────────────────────────────────────
+
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
       if (viewableItems.length > 0 && viewableItems[0].index != null) {
@@ -85,12 +117,22 @@ export function PhotoLightbox({
     []
   );
 
-  const getItemLayout = useCallback(
+  const getMainLayout = useCallback(
     (_: unknown, index: number) => ({ length: SCREEN_W, offset: SCREEN_W * index, index }),
     []
   );
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  const getFilmLayout = useCallback(
+    (_: unknown, index: number) => ({ length: THUMB_STRIDE, offset: THUMB_STRIDE * index, index }),
+    []
+  );
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  function jumpToPhoto(index: number) {
+    setCurrentIndex(index);
+    listRef.current?.scrollToIndex({ index, animated: false });
+  }
 
   function openComment() {
     setCommentOpen(true);
@@ -151,10 +193,7 @@ export function PhotoLightbox({
     }
   }, [photos, downloading]);
 
-  // The comment bar floats just above the keyboard.
-  // When keyboard is hidden it sits above the toolbar (toolbar ≈ 56px + bottom inset).
-  const toolbarHeight = 56 + insets.bottom;
-  const commentBarBottom = keyboardHeight > 0 ? keyboardHeight : toolbarHeight;
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <Modal
@@ -168,7 +207,7 @@ export function PhotoLightbox({
       <StatusBar hidden />
       <View style={styles.root}>
 
-        {/* ── Photo pager ─────────────────────────────────────────────── */}
+        {/* ── Main photo pager ────────────────────────────────────────── */}
         <FlatList
           ref={listRef}
           data={photos}
@@ -177,7 +216,7 @@ export function PhotoLightbox({
           pagingEnabled
           showsHorizontalScrollIndicator={false}
           initialScrollIndex={initialIndex}
-          getItemLayout={getItemLayout}
+          getItemLayout={getMainLayout}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           decelerationRate="fast"
@@ -196,34 +235,53 @@ export function PhotoLightbox({
 
         {/* ── Top bar ─────────────────────────────────────────────────── */}
         <SafeAreaView style={styles.topBar} pointerEvents="box-none">
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={16} activeOpacity={0.8}>
-            <X size={20} color="#fff" strokeWidth={2.5} />
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={12} activeOpacity={0.75}>
+            <X size={18} color="#fff" strokeWidth={2.5} />
           </TouchableOpacity>
 
-          {photos.length > 1 ? (
+          {photos.length > 1 && (
             <Text style={styles.counter}>{currentIndex + 1} / {photos.length}</Text>
-          ) : (
-            <View />
           )}
 
-          <View style={{ width: 44 }} />
+          <View style={{ width: 38 }} />
         </SafeAreaView>
 
-        {/* ── Dot indicators ──────────────────────────────────────────── */}
-        {photos.length > 1 && !commentOpen && (
-          <View style={styles.dotRow} pointerEvents="none">
-            {photos.map((_, i) => (
-              <View key={i} style={[styles.dot, i === currentIndex && styles.dotActive]} />
-            ))}
+        {/* ── Filmstrip ───────────────────────────────────────────────── */}
+        {photos.length > 1 && (
+          <View style={[styles.filmstrip, { bottom: TOOLBAR_INNER + insets.bottom }]}>
+            <FlatList
+              ref={filmRef}
+              data={photos}
+              keyExtractor={(_, i) => `f${i}`}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              getItemLayout={getFilmLayout}
+              contentContainerStyle={styles.filmContent}
+              renderItem={({ item, index }) => {
+                const active = index === currentIndex;
+                return (
+                  <TouchableOpacity
+                    onPress={() => jumpToPhoto(index)}
+                    activeOpacity={0.8}
+                    style={[styles.thumb, active && styles.thumbActive]}
+                  >
+                    <Image
+                      source={{ uri: item.url }}
+                      style={styles.thumbImg}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
+                );
+              }}
+            />
           </View>
         )}
 
         {/* ── Inline comment composer ──────────────────────────────────── */}
         {commentOpen && (
           <View style={[styles.commentBar, { bottom: commentBarBottom }]}>
-            {/* Dismiss handle */}
-            <TouchableOpacity style={styles.commentClose} onPress={closeComment} hitSlop={8}>
-              <X size={16} color={colors.brown} strokeWidth={2.5} />
+            <TouchableOpacity style={styles.commentDismiss} onPress={closeComment} hitSlop={8}>
+              <X size={15} color="rgba(255,255,255,0.6)" strokeWidth={2.5} />
             </TouchableOpacity>
 
             <TextInput
@@ -231,95 +289,89 @@ export function PhotoLightbox({
               style={styles.commentInput}
               value={commentText}
               onChangeText={setCommentText}
-              placeholder="Write a comment…"
-              placeholderTextColor={colors.brown + "80"}
+              placeholder="Add a comment…"
+              placeholderTextColor="rgba(255,255,255,0.35)"
               returnKeyType="send"
               onSubmitEditing={handleSend}
               blurOnSubmit={false}
               autoCorrect
               multiline={false}
+              selectionColor="rgba(255,255,255,0.6)"
             />
 
             <TouchableOpacity
               style={[styles.sendBtn, (!commentText.trim() || sending) && styles.sendBtnDisabled]}
               onPress={handleSend}
               disabled={!commentText.trim() || sending}
-              activeOpacity={0.8}
+              activeOpacity={0.75}
             >
               {sending
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Send size={15} color="#fff" strokeWidth={2.2} />
+                ? <ActivityIndicator color="rgba(255,255,255,0.8)" size="small" />
+                : <Send size={15} color="rgba(255,255,255,0.9)" strokeWidth={2.2} />
               }
             </TouchableOpacity>
           </View>
         )}
 
-        {/* ── Bottom toolbar ──────────────────────────────────────────── */}
-        <SafeAreaView edges={["bottom"]} style={[styles.toolbar, commentOpen && styles.toolbarDimmed]}>
-          <ToolbarBtn
+        {/* ── Toolbar ─────────────────────────────────────────────────── */}
+        <View
+          style={[
+            styles.toolbar,
+            { paddingBottom: insets.bottom, height: TOOLBAR_INNER + insets.bottom },
+            commentOpen && styles.toolbarDimmed,
+          ]}
+        >
+          <ToolBtn
+            icon={<Share2 size={22} color="#fff" strokeWidth={1.8} />}
+            onPress={handleShare}
+          />
+          <ToolBtn
             icon={
               <Heart
-                size={26}
+                size={22}
                 color={favorited ? colors.coral : "#fff"}
                 fill={favorited ? colors.coral : "none"}
                 strokeWidth={favorited ? 0 : 1.8}
               />
             }
-            label="Favorite"
             onPress={onFavorite}
-            active={favorited}
           />
-          <ToolbarBtn
+          <ToolBtn
             icon={
               <MessageCircle
-                size={26}
+                size={22}
                 color={commentOpen ? colors.coral : "#fff"}
                 strokeWidth={1.8}
               />
             }
-            label="Comment"
             onPress={onSendComment ? openComment : undefined}
-            active={commentOpen}
           />
-          <ToolbarBtn
-            icon={<Share2 size={26} color="#fff" strokeWidth={1.8} />}
-            label="Share"
-            onPress={handleShare}
-          />
-          <ToolbarBtn
+          <ToolBtn
             icon={
               downloading
-                ? <ActivityIndicator color="#fff" size="small" style={{ width: 26, height: 26 }} />
-                : <Download size={26} color="#fff" strokeWidth={1.8} />
+                ? <ActivityIndicator color="#fff" size="small" style={{ width: 22, height: 22 }} />
+                : <Download size={22} color="#fff" strokeWidth={1.8} />
             }
-            label="Save"
             onPress={handleDownload}
           />
-        </SafeAreaView>
+        </View>
+
       </View>
     </Modal>
   );
 }
 
-// ── ToolbarBtn ────────────────────────────────────────────────────────────────
+// ── ToolBtn ───────────────────────────────────────────────────────────────────
 
-function ToolbarBtn({
-  icon, label, onPress, active,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onPress?: () => void;
-  active?: boolean;
-}) {
+function ToolBtn({ icon, onPress }: { icon: React.ReactNode; onPress?: () => void }) {
   return (
     <TouchableOpacity
-      style={toolbarStyles.btn}
+      style={toolStyles.btn}
       onPress={onPress}
-      activeOpacity={onPress ? 0.7 : 1}
+      activeOpacity={onPress ? 0.65 : 1}
       disabled={!onPress}
     >
       {icon}
-      <Text style={[toolbarStyles.label, active && toolbarStyles.labelActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -329,16 +381,14 @@ function ToolbarBtn({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
 
+  // Main photo
   page: {
     width: SCREEN_W,
     height: SCREEN_H,
     alignItems: "center",
     justifyContent: "center",
   },
-  image: {
-    width: SCREEN_W,
-    height: SCREEN_H,
-  },
+  image: { width: SCREEN_W, height: SCREEN_H },
 
   // Top bar
   topBar: {
@@ -347,115 +397,111 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    paddingHorizontal: 10,
+    paddingTop: 4,
+    backgroundColor: "rgba(0,0,0,0.4)",
   },
   closeBtn: {
-    width: 44, height: 44,
+    width: 38, height: 38,
     alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 22,
+    borderRadius: 19,
   },
   counter: {
-    color: "#fff",
+    color: "rgba(255,255,255,0.85)",
     fontFamily: "PatrickHand",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "600",
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
 
-  // Dot indicators
-  dotRow: {
+  // Filmstrip
+  filmstrip: {
     position: "absolute",
-    bottom: 110,
     left: 0, right: 0,
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 6,
+    height: FILMSTRIP_H,
+    backgroundColor: "rgba(0,0,0,0.7)",
   },
-  dot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.35)",
+  filmContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    gap: THUMB_GAP,
+    alignItems: "center",
   },
-  dotActive: {
-    width: 18,
-    backgroundColor: "#fff",
+  thumb: {
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: 4,
+    overflow: "hidden",
+    opacity: 0.55,
+  },
+  thumbActive: {
+    opacity: 1,
+    borderWidth: 2,
+    borderColor: "#fff",
+    borderRadius: 4,
+  },
+  thumbImg: {
+    width: "100%",
+    height: "100%",
   },
 
-  // Inline comment bar — floats above keyboard / toolbar
+  // Inline comment bar
   commentBar: {
     position: "absolute",
     left: 0, right: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.cream,
+    backgroundColor: "rgba(0,0,0,0.92)",
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 20,
+    borderTopColor: "rgba(255,255,255,0.12)",
   },
-  commentClose: {
-    width: 30, height: 30,
+  commentDismiss: {
+    width: 28, height: 28,
     alignItems: "center", justifyContent: "center",
-    backgroundColor: colors.paper,
-    borderRadius: 15,
   },
   commentInput: {
     flex: 1,
     fontFamily: "PatrickHand",
     fontSize: 15,
-    color: colors.ink,
-    paddingVertical: 8,
+    color: "#fff",
+    paddingVertical: 7,
     paddingHorizontal: 12,
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.2)",
   },
   sendBtn: {
-    width: 36, height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.coral,
+    width: 32, height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.2)",
     alignItems: "center", justifyContent: "center",
   },
-  sendBtnDisabled: { opacity: 0.4 },
+  sendBtnDisabled: { opacity: 0.35 },
 
-  // Bottom toolbar
+  // Toolbar
   toolbar: {
     position: "absolute",
     bottom: 0, left: 0, right: 0,
     flexDirection: "row",
     justifyContent: "space-around",
-    backgroundColor: "rgba(0,0,0,0.6)",
-    paddingVertical: 14,
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.82)",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.12)",
+    borderTopColor: "rgba(255,255,255,0.1)",
   },
-  toolbarDimmed: {
-    opacity: 0.35,
-  },
+  toolbarDimmed: { opacity: 0.3 },
 });
 
-const toolbarStyles = StyleSheet.create({
+const toolStyles = StyleSheet.create({
   btn: {
+    flex: 1,
     alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 16,
-    minWidth: 64,
-  },
-  label: {
-    color: "rgba(255,255,255,0.75)",
-    fontFamily: "PatrickHand",
-    fontSize: 12,
-  },
-  labelActive: {
-    color: colors.coral,
+    justifyContent: "center",
+    height: TOOLBAR_INNER,
   },
 });
