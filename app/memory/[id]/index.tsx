@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, ActivityIndicator, Image, Modal, Alert, Dimensions,
@@ -16,6 +16,7 @@ import {
   Send, Trash2, Camera, Pencil, Mic,
 } from "lucide-react-native";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { PhotoLightbox } from "@/components/ui/PhotoLightbox";
 import { colors } from "@/theme/colors";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -57,6 +58,8 @@ export default function MemoryDetailScreen() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const commentInputRef = useRef<TextInput>(null);
 
   // Audio
   const player = useAudioPlayer(memory?.audioUrl ?? null);
@@ -202,12 +205,17 @@ export default function MemoryDetailScreen() {
                 const idx = Math.round(e.nativeEvent.contentOffset.x / (PHOTO_SIZE + 12));
                 setCurrentPhotoIndex(idx);
               }}
-              renderItem={({ item }) => (
-                <Image
-                  source={{ uri: item.url }}
-                  style={[styles.photoImg, { width: PHOTO_SIZE }]}
-                  resizeMode="cover"
-                />
+              renderItem={({ item, index }) => (
+                <TouchableOpacity
+                  activeOpacity={0.95}
+                  onPress={() => setLightboxIndex(index)}
+                >
+                  <Image
+                    source={{ uri: item.url }}
+                    style={[styles.photoImg, { width: PHOTO_SIZE }]}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
               )}
             />
             {photos.length > 1 && (
@@ -331,6 +339,7 @@ export default function MemoryDetailScreen() {
               />
             )}
             <TextInput
+              ref={commentInputRef}
               style={styles.composerInput}
               value={draft}
               onChangeText={setDraft}
@@ -354,6 +363,21 @@ export default function MemoryDetailScreen() {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* Photo lightbox */}
+      <PhotoLightbox
+        visible={lightboxIndex !== null}
+        photos={photos}
+        initialIndex={lightboxIndex ?? 0}
+        onClose={() => setLightboxIndex(null)}
+        favorited={liked}
+        onFavorite={() => toggleHeart({ memoryId })}
+        onComment={() => {
+          setLightboxIndex(null);
+          setTimeout(() => commentInputRef.current?.focus(), 350);
+        }}
+        memoryTitle={memory?.title}
+      />
 
       {/* Options bottom sheet */}
       <Modal
