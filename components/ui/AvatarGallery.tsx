@@ -2,7 +2,7 @@ import { View, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from "re
 import { SvgXml } from "react-native-svg";
 import { Camera } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { AVATAR_SVGS, AVATAR_PRESETS } from "@/constants/avatars";
@@ -34,15 +34,15 @@ export function AvatarGallery({ selectedPreset, onSelectPreset, onUpload, upload
     });
     if (result.canceled) return;
 
-    const uri = result.assets[0].uri;
+    const asset = result.assets[0];
+    const mimeType = asset.mimeType ?? "image/jpeg";
     setUploading(true);
     try {
       const uploadUrl = await generateUploadUrl();
-      const uploadResult = await FileSystem.uploadAsync(uploadUrl, uri, {
+      const uploadResult = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
         httpMethod: "POST",
         uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        headers: { "Content-Type": "image/jpeg" },
-        mimeType: "image/jpeg",
+        headers: { "Content-Type": mimeType },
       });
       const { storageId } = JSON.parse(uploadResult.body) as { storageId: Id<"_storage"> };
       onUpload(storageId as string, uri);

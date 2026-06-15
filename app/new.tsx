@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, ActivityIndicator, Image, Platform, Modal, Alert,
@@ -9,8 +9,11 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
-import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system/legacy";
+import {
+  useAudioRecorder, useAudioRecorderState, useAudioPlayer, useAudioPlayerStatus,
+  requestRecordingPermissionsAsync, setAudioModeAsync, RecordingPresets,
+} from "expo-audio";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import {
   X, CalendarDays, Pencil, Mic, Square, MapPin, Camera, Plus,
@@ -51,13 +54,15 @@ export default function NewMemoryScreen() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Voice
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [audioUri, setAudioUri] = useState<string | null>(null);
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder, 500);
+  const player = useAudioPlayer(audioUri ?? null);
+  const playerStatus = useAudioPlayerStatus(player);
+
+  const isRecording = recorderState.isRecording;
+  const isPlaying = playerStatus.playing;
+  const recordingSeconds = Math.floor((recorderState.durationMillis ?? 0) / 1000);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -79,12 +84,12 @@ export default function NewMemoryScreen() {
     setError("");
     try {
       for (const asset of result.assets) {
+        const mimeType = asset.mimeType ?? "image/jpeg";
         const uploadUrl = await generateUploadUrl();
         const uploadResult = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
           httpMethod: "POST",
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          headers: { "Content-Type": "image/jpeg" },
-          mimeType: "image/jpeg",
+          headers: { "Content-Type": mimeType },
         });
         const { storageId } = JSON.parse(uploadResult.body) as { storageId: Id<"_storage"> };
         setPhotos((cur) => [...cur, { storageId, previewUrl: asset.uri }]);
@@ -104,64 +109,33 @@ export default function NewMemoryScreen() {
 
   async function startRecording() {
     try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== "granted") { Alert.alert("Permission needed", "Allow microphone access to record."); return; }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      recordingRef.current = recording;
-      setIsRecording(true);
-      setRecordingSeconds(0);
-      timerRef.current = setInterval(() => {
-        setRecordingSeconds((s) => {
-          if (s >= 59) { stopRecording(); return 60; }
-          return s + 1;
-        });
-      }, 1000);
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) { Alert.alert("Permission needed", "Allow microphone access to record."); return; }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
     } catch {
       setError("Microphone access denied.");
     }
   }
 
-  const stopRecording = useCallback(async () => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (!recordingRef.current) return;
-    try {
-      await recordingRef.current.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
-      setIsRecording(false);
-      if (uri) setAudioUri(uri);
-    } catch {}
-  }, []);
+  async function stopRecording() {
+    await recorder.stop();
+    await setAudioModeAsync({ allowsRecording: false });
+    if (recorder.uri) setAudioUri(recorder.uri);
+  }
 
-  async function togglePlayback() {
-    if (!audioUri) return;
-    if (isPlaying && sound) {
-      await sound.pauseAsync();
-      setIsPlaying(false);
-      return;
+  function togglePlayback() {
+    if (isPlaying) {
+      player.pause();
+    } else {
+      player.play();
     }
-    if (sound) {
-      await sound.playAsync();
-      setIsPlaying(true);
-      return;
-    }
-    const { sound: newSound } = await Audio.Sound.createAsync(
-      { uri: audioUri },
-      { shouldPlay: true },
-      (status) => { if (!status.isLoaded || status.didJustFinish) setIsPlaying(false); }
-    );
-    setSound(newSound);
-    setIsPlaying(true);
   }
 
   function discardAudio() {
-    sound?.unloadAsync();
-    setSound(null);
+    player.remove();
     setAudioUri(null);
-    setIsPlaying(false);
-    setRecordingSeconds(0);
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────

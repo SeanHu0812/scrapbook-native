@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, ActivityIndicator, Image, Modal, Alert, Dimensions,
@@ -9,8 +9,8 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
-import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system/legacy";
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import {
   ArrowLeft, MoreHorizontal, Heart, MessageCircle, Share2,
   Send, Trash2, Camera, Pencil, Mic,
@@ -59,11 +59,10 @@ export default function MemoryDetailScreen() {
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
   // Audio
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [audioLoading, setAudioLoading] = useState(false);
-
-  useEffect(() => { return () => { sound?.unloadAsync(); }; }, [sound]);
+  const player = useAudioPlayer(memory?.audioUrl ?? null);
+  const playerStatus = useAudioPlayerStatus(player);
+  const isPlaying = playerStatus.playing;
+  const audioLoading = playerStatus.isBuffering;
 
   const liked = reactionData?.liked ?? false;
   const likeCount = reactionData?.count ?? 0;
@@ -71,22 +70,9 @@ export default function MemoryDetailScreen() {
 
   // ── Audio ─────────────────────────────────────────────────────────────────
 
-  async function togglePlayback() {
+  function togglePlayback() {
     if (!memory?.audioUrl) return;
-    if (isPlaying && sound) { await sound.pauseAsync(); setIsPlaying(false); return; }
-    if (sound) { await sound.playAsync(); setIsPlaying(true); return; }
-    setAudioLoading(true);
-    try {
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: memory.audioUrl },
-        { shouldPlay: true },
-        (status) => { if (!status.isLoaded || status.didJustFinish) setIsPlaying(false); }
-      );
-      setSound(newSound);
-      setIsPlaying(true);
-    } finally {
-      setAudioLoading(false);
-    }
+    if (isPlaying) { player.pause(); } else { player.play(); }
   }
 
   // ── Comment ───────────────────────────────────────────────────────────────
@@ -114,12 +100,12 @@ export default function MemoryDetailScreen() {
     try {
       const ids: Id<"_storage">[] = [];
       for (const asset of result.assets) {
+        const mimeType = asset.mimeType ?? "image/jpeg";
         const uploadUrl = await generateUploadUrl();
         const uploadResult = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
           httpMethod: "POST",
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          headers: { "Content-Type": "image/jpeg" },
-          mimeType: "image/jpeg",
+          headers: { "Content-Type": mimeType },
         });
         const { storageId } = JSON.parse(uploadResult.body) as { storageId: Id<"_storage"> };
         ids.push(storageId);
