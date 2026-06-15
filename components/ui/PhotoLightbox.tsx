@@ -1,7 +1,8 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import {
-  Modal, View, Image, FlatList, TextInput, TouchableOpacity, Text, StyleSheet,
-  Dimensions, StatusBar, Share, Alert, ActivityIndicator, Platform, Keyboard,
+  Modal, View, Image, Animated, FlatList, TextInput, TouchableOpacity,
+  Text, StyleSheet, Dimensions, StatusBar, Share, Alert,
+  ActivityIndicator, Platform, Keyboard,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { X, Heart, MessageCircle, Share2, Download, Send } from "lucide-react-native";
@@ -11,11 +12,13 @@ import { colors } from "@/theme/colors";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
-const THUMB_SIZE = 52;
-const THUMB_GAP = 3;
-const THUMB_STRIDE = THUMB_SIZE + THUMB_GAP;
-const FILMSTRIP_H = THUMB_SIZE + 14; // 7px top/bottom padding
-const TOOLBAR_INNER = 42;            // icon row height, before safe area
+// Filmstrip at 50% of the original 52px thumbnails
+const THUMB_SIZE    = 26;
+const THUMB_MARGIN  = 1.5;  // each side on non-active items  → 3px between items
+const THUMB_MARGIN_ACTIVE = 5; // each side on active item → breathing room
+const THUMB_STRIDE  = THUMB_SIZE + THUMB_MARGIN * 2; // approx stride for layout calc
+const FILMSTRIP_H   = THUMB_SIZE + 8; // 4px top/bottom padding → 34px total
+const TOOLBAR_INNER = 42;
 
 export interface LightboxPhoto {
   url: string;
@@ -42,18 +45,23 @@ export function PhotoLightbox({
   const filmRef    = useRef<FlatList>(null);
   const commentRef = useRef<TextInput>(null);
 
-  const [currentIndex, setCurrentIndex]   = useState(initialIndex);
-  const [downloading, setDownloading]     = useState(false);
-  const [commentOpen, setCommentOpen]     = useState(false);
-  const [commentText, setCommentText]     = useState("");
-  const [sending, setSending]             = useState(false);
+  const [currentIndex, setCurrentIndex]     = useState(initialIndex);
+  const [downloading, setDownloading]       = useState(false);
+  const [commentOpen, setCommentOpen]       = useState(false);
+  const [commentText, setCommentText]       = useState("");
+  const [sending, setSending]               = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  // Total chrome height sitting at the bottom (filmstrip + toolbar + safe area)
-  const chromeHeight = FILMSTRIP_H + TOOLBAR_INNER + insets.bottom;
+  // One Animated.Value per thumbnail — created/reset when photo count changes
+  const thumbScalesRef = useRef<Animated.Value[]>([]);
+  if (thumbScalesRef.current.length !== photos.length) {
+    thumbScalesRef.current = photos.map(() => new Animated.Value(1));
+  }
+  const thumbScales = thumbScalesRef.current;
 
-  // Comment bar sits just above the chrome when keyboard hidden,
-  // or just above the keyboard when it's visible.
+  // Chrome height: filmstrip (only when >1 photo) + toolbar + safe area
+  const hasFilmstrip = photos.length > 1;
+  const chromeHeight = (hasFilmstrip ? FILMSTRIP_H : 0) + TOOLBAR_INNER + insets.bottom;
   const commentBarBottom = keyboardHeight > 0 ? keyboardHeight : chromeHeight;
 
   // ── Keyboard tracking ─────────────────────────────────────────────────────
@@ -66,7 +74,7 @@ export function PhotoLightbox({
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  // ── Reset on close ───────────────────────────────────────────────────────
+  // ── Reset on close ────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!visible) {
@@ -76,7 +84,7 @@ export function PhotoLightbox({
     }
   }, [visible]);
 
-  // ── Sync scroll when lightbox opens ──────────────────────────────────────
+  // ── Sync scroll when lightbox opens ───────────────────────────────────────
 
   useEffect(() => {
     if (!visible) return;
@@ -85,24 +93,45 @@ export function PhotoLightbox({
       if (initialIndex > 0) {
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false });
       }
-      filmRef.current?.scrollToIndex({ index: initialIndex, animated: false });
+      if (hasFilmstrip) {
+        filmRef.current?.scrollToIndex({ index: initialIndex, animated: false, viewPosition: 0.5 });
+      }
     }, 50);
     return () => clearTimeout(t);
-  }, [visible, initialIndex]);
+  }, [visible, initialIndex, hasFilmstrip]);
 
-  // ── Scroll filmstrip when current index changes ───────────────────────────
-
-  const currentIndexRef = useRef(currentIndex);
-  currentIndexRef.current = currentIndex;
+  // ── Thumbnail pulse + filmstrip centering on index change ─────────────────
 
   useEffect(() => {
-    if (photos.length < 2) return;
-    filmRef.current?.scrollToIndex({
-      index: currentIndex,
-      animated: true,
-      viewPosition: 0.5,
+    // Reset all others immediately
+    thumbScales.forEach((s, i) => {
+      if (i !== currentIndex) {
+        s.stopAnimation();
+        s.setValue(1);
+      }
     });
-  }, [currentIndex, photos.length]);
+
+    // Brief scale-up then spring back to normal
+    const active = thumbScales[currentIndex];
+    if (active) {
+      active.setValue(1.45);
+      Animated.spring(active, {
+        toValue: 1,
+        useNativeDriver: true,
+        speed: 22,
+        bounciness: 5,
+      }).start();
+    }
+
+    // Keep selected thumbnail centered in the filmstrip
+    if (hasFilmstrip && photos.length > 1) {
+      filmRef.current?.scrollToIndex({
+        index: currentIndex,
+        animated: true,
+        viewPosition: 0.5,
+      });
+    }
+  }, [currentIndex, hasFilmstrip]);
 
   // ── FlatList helpers ──────────────────────────────────────────────────────
 
@@ -122,8 +151,14 @@ export function PhotoLightbox({
     []
   );
 
+  // Film stride: non-active items take THUMB_SIZE + 2*THUMB_MARGIN,
+  // active adds extra margin — approximate with average for getItemLayout
   const getFilmLayout = useCallback(
-    (_: unknown, index: number) => ({ length: THUMB_STRIDE, offset: THUMB_STRIDE * index, index }),
+    (_: unknown, index: number) => ({
+      length: THUMB_SIZE + THUMB_MARGIN * 2,
+      offset: (THUMB_SIZE + THUMB_MARGIN * 2) * index,
+      index,
+    }),
     []
   );
 
@@ -160,7 +195,7 @@ export function PhotoLightbox({
   }
 
   const handleShare = useCallback(async () => {
-    const url = photos[currentIndexRef.current]?.url;
+    const url = photos[currentIndex]?.url;
     if (!url) return;
     try {
       await Share.share(
@@ -169,10 +204,10 @@ export function PhotoLightbox({
           : { message: url }
       );
     } catch {}
-  }, [photos, memoryTitle]);
+  }, [photos, currentIndex, memoryTitle]);
 
   const handleDownload = useCallback(async () => {
-    const url = photos[currentIndexRef.current]?.url;
+    const url = photos[currentIndex]?.url;
     if (!url || downloading) return;
     const { status } = await MediaLibrary.requestPermissionsAsync();
     if (status !== "granted") {
@@ -191,7 +226,7 @@ export function PhotoLightbox({
     } finally {
       setDownloading(false);
     }
-  }, [photos, downloading]);
+  }, [photos, currentIndex, downloading]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -247,7 +282,7 @@ export function PhotoLightbox({
         </SafeAreaView>
 
         {/* ── Filmstrip ───────────────────────────────────────────────── */}
-        {photos.length > 1 && (
+        {hasFilmstrip && (
           <View style={[styles.filmstrip, { bottom: TOOLBAR_INNER + insets.bottom }]}>
             <FlatList
               ref={filmRef}
@@ -258,16 +293,20 @@ export function PhotoLightbox({
               getItemLayout={getFilmLayout}
               contentContainerStyle={styles.filmContent}
               renderItem={({ item, index }) => {
-                const active = index === currentIndex;
+                const selected = index === currentIndex;
+                const scale = thumbScales[index] ?? new Animated.Value(1);
                 return (
                   <TouchableOpacity
                     onPress={() => jumpToPhoto(index)}
-                    activeOpacity={0.8}
-                    style={[styles.thumb, active && styles.thumbActive]}
+                    activeOpacity={0.75}
+                    style={[
+                      styles.thumbWrap,
+                      selected ? styles.thumbWrapActive : styles.thumbWrapIdle,
+                    ]}
                   >
-                    <Image
+                    <Animated.Image
                       source={{ uri: item.url }}
-                      style={styles.thumbImg}
+                      style={[styles.thumbImg, { transform: [{ scale }] }]}
                       resizeMode="cover"
                     />
                   </TouchableOpacity>
@@ -281,7 +320,7 @@ export function PhotoLightbox({
         {commentOpen && (
           <View style={[styles.commentBar, { bottom: commentBarBottom }]}>
             <TouchableOpacity style={styles.commentDismiss} onPress={closeComment} hitSlop={8}>
-              <X size={15} color="rgba(255,255,255,0.6)" strokeWidth={2.5} />
+              <X size={15} color="rgba(255,255,255,0.55)" strokeWidth={2.5} />
             </TouchableOpacity>
 
             <TextInput
@@ -290,7 +329,7 @@ export function PhotoLightbox({
               value={commentText}
               onChangeText={setCommentText}
               placeholder="Add a comment…"
-              placeholderTextColor="rgba(255,255,255,0.35)"
+              placeholderTextColor="rgba(255,255,255,0.3)"
               returnKeyType="send"
               onSubmitEditing={handleSend}
               blurOnSubmit={false}
@@ -321,10 +360,7 @@ export function PhotoLightbox({
             commentOpen && styles.toolbarDimmed,
           ]}
         >
-          <ToolBtn
-            icon={<Share2 size={22} color="#fff" strokeWidth={1.8} />}
-            onPress={handleShare}
-          />
+          <ToolBtn icon={<Share2 size={22} color="#fff" strokeWidth={1.8} />} onPress={handleShare} />
           <ToolBtn
             icon={
               <Heart
@@ -381,7 +417,6 @@ function ToolBtn({ icon, onPress }: { icon: React.ReactNode; onPress?: () => voi
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
 
-  // Main photo
   page: {
     width: SCREEN_W,
     height: SCREEN_H,
@@ -415,38 +450,41 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // Filmstrip
+  // Filmstrip — transparent background, sits above toolbar
   filmstrip: {
     position: "absolute",
     left: 0, right: 0,
     height: FILMSTRIP_H,
-    backgroundColor: "rgba(0,0,0,0.7)",
+    // no background — photo shows through
   },
   filmContent: {
     paddingHorizontal: 10,
-    paddingVertical: 7,
-    gap: THUMB_GAP,
+    paddingVertical: 4,
     alignItems: "center",
   },
-  thumb: {
+
+  // Thumbnail wrappers — overflow visible so the scale pops outside the box
+  thumbWrap: {
+    overflow: "visible",
     width: THUMB_SIZE,
     height: THUMB_SIZE,
-    borderRadius: 4,
-    overflow: "hidden",
-    opacity: 0.55,
+    borderRadius: 3,
   },
-  thumbActive: {
-    opacity: 1,
-    borderWidth: 2,
-    borderColor: "#fff",
-    borderRadius: 4,
+  thumbWrapIdle: {
+    marginHorizontal: THUMB_MARGIN,
+  },
+  thumbWrapActive: {
+    // Extra horizontal space separates the selected thumb from its neighbors
+    marginHorizontal: THUMB_MARGIN_ACTIVE,
   },
   thumbImg: {
-    width: "100%",
-    height: "100%",
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: 3,
+    opacity: 0.72,
   },
 
-  // Inline comment bar
+  // Comment bar
   commentBar: {
     position: "absolute",
     left: 0, right: 0,
@@ -473,15 +511,15 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.1)",
     borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.2)",
+    borderColor: "rgba(255,255,255,0.18)",
   },
   sendBtn: {
     width: 32, height: 32,
     borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center", justifyContent: "center",
   },
-  sendBtnDisabled: { opacity: 0.35 },
+  sendBtnDisabled: { opacity: 0.3 },
 
   // Toolbar
   toolbar: {
