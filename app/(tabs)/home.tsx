@@ -1,18 +1,22 @@
 import {
-  View, Text, ScrollView, TouchableOpacity, Image,
-  StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, Image, FlatList,
+  StyleSheet, Dimensions, ImageBackground,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Bell, ChevronDown, ChevronRight, ListChecks } from "lucide-react-native";
+import { Bell, ChevronDown, ChevronRight, Heart, ListChecks } from "lucide-react-native";
 import { useQuery, useMutation } from "convex/react";
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api } from "@/convex/_generated/api";
 import { useSpace } from "@/lib/useSpace";
 import { Card } from "@/components/ui/Card";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { InvitePartnerCard } from "@/components/ui/InvitePartnerCard";
 import { colors } from "@/theme/colors";
+
+const { width: SCREEN_W } = Dimensions.get("window");
+const CARD_W = SCREEN_W - 40; // full width minus page padding
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -25,6 +29,8 @@ export default function HomeScreen() {
   const upcomingTodos = (allTodos ?? []).filter((t) => !t.done).slice(0, 2);
   const featuredQuestion = triad?.[0] ?? null;
   const isSolo = status === "solo";
+  const recentMemories = memories.slice(0, 5);
+  const [memoryIndex, setMemoryIndex] = useState(0);
 
   useEffect(() => { ensureTriad(); }, [ensureTriad]);
 
@@ -147,61 +153,88 @@ export default function HomeScreen() {
           </Card>
         </TouchableOpacity>
 
-        {/* Memory timeline */}
-        <View style={styles.timelineSection}>
-          <View style={styles.timelineHeader}>
-            <Text style={styles.timelineTitle}>Memory timeline</Text>
-            <TouchableOpacity
-              style={styles.addMemoryBtn}
-              onPress={() => router.push("/new")}
-            >
-              <Text style={styles.addMemoryPlus}>+</Text>
+        {/* Recent Memories */}
+        <View style={styles.recentSection}>
+          <View style={styles.recentHeader}>
+            <Text style={styles.recentTitle}>Recent Memories</Text>
+            <TouchableOpacity onPress={() => router.push("/(tabs)/journal")}>
+              <Text style={styles.seeAll}>See all</Text>
             </TouchableOpacity>
           </View>
 
           {memories === undefined ? (
-            <>
-              <MemorySkeleton />
-              <MemorySkeleton />
-            </>
+            <View style={styles.memoryCardSkeleton} />
           ) : memories.length === 0 ? (
-            <Card tint="white" style={styles.emptyCard}>
+            <TouchableOpacity
+              style={styles.emptyCard}
+              onPress={() => router.push("/new")}
+              activeOpacity={0.85}
+            >
               <Text style={styles.emptyTitle}>no memories yet</Text>
-              <Text style={styles.emptySubtitle}>tap + to add your first one</Text>
-            </Card>
+              <Text style={styles.emptySubtitle}>tap to capture your first one ✨</Text>
+            </TouchableOpacity>
           ) : (
-            memories.slice(0, 5).map((m) => (
-              <TouchableOpacity
-                key={m._id}
-                activeOpacity={0.9}
-                onPress={() => router.push(`/memory/${m._id}`)}
-              >
-                <Card tint="white" style={styles.memoryCard}>
-                  <View style={styles.memoryDateRow}>
-                    <Text style={styles.memoryDate}>{formatDate(m.date)}</Text>
-                    <Text style={styles.memoryWeekday}>{m.weekday} ☀️</Text>
-                  </View>
-                  <View style={styles.memoryBody}>
-                    {m.firstPhotoUrl ? (
-                      <Image
-                        source={{ uri: m.firstPhotoUrl }}
-                        style={styles.memoryPhoto}
+            <>
+              <FlatList
+                data={recentMemories}
+                keyExtractor={(m) => m._id}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                snapToInterval={CARD_W + 12}
+                decelerationRate="fast"
+                contentContainerStyle={{ gap: 12 }}
+                onMomentumScrollEnd={(e) => {
+                  setMemoryIndex(Math.round(e.nativeEvent.contentOffset.x / (CARD_W + 12)));
+                }}
+                renderItem={({ item: m }) => (
+                  <TouchableOpacity
+                    activeOpacity={0.95}
+                    onPress={() => router.push(`/memory/${m._id}`)}
+                    style={styles.memoryCard}
+                  >
+                    <ImageBackground
+                      source={m.firstPhotoUrl ? { uri: m.firstPhotoUrl } : undefined}
+                      style={styles.memoryCardBg}
+                      imageStyle={styles.memoryCardImg}
+                    >
+                      {/* gradient overlay */}
+                      <LinearGradient
+                        colors={["transparent", "rgba(0,0,0,0.72)"]}
+                        locations={[0.35, 1]}
+                        style={styles.cardGradient}
                       />
-                    ) : (
-                      <View style={[styles.memoryPhoto, styles.memoryPhotoPlaceholder]} />
-                    )}
-                    <View style={styles.memoryInfo}>
-                      <Text style={styles.memoryTitle} numberOfLines={1}>{m.title}</Text>
-                      <View style={styles.memoryCaptionBox}>
-                        <Text style={styles.memoryCaption} numberOfLines={2}>
-                          {m.caption || m.body?.slice(0, 60)}
-                        </Text>
+
+                      {/* date badge */}
+                      <View style={styles.dateBadge}>
+                        <Text style={styles.dateBadgeText}>{formatDate(m.date)}</Text>
                       </View>
-                    </View>
-                  </View>
-                </Card>
-              </TouchableOpacity>
-            ))
+
+                      {/* bottom content */}
+                      <View style={styles.cardBottom}>
+                        <View style={styles.cardBottomText}>
+                          <Text style={styles.cardTitle} numberOfLines={2}>{m.title}</Text>
+                          {!!(m.caption || m.body) && (
+                            <Text style={styles.cardCaption} numberOfLines={2}>
+                              {m.caption || m.body?.slice(0, 80)}
+                            </Text>
+                          )}
+                        </View>
+                        <MemoryHeartBtn memoryId={m._id} />
+                      </View>
+                    </ImageBackground>
+                  </TouchableOpacity>
+                )}
+              />
+
+              {recentMemories.length > 1 && (
+                <View style={styles.dotRow}>
+                  {recentMemories.map((_, i) => (
+                    <View key={i} style={[styles.dot, i === memoryIndex && styles.dotActive]} />
+                  ))}
+                </View>
+              )}
+            </>
           )}
         </View>
       </ScrollView>
@@ -209,21 +242,24 @@ export default function HomeScreen() {
   );
 }
 
-function MemorySkeleton() {
+
+function MemoryHeartBtn({ memoryId }: { memoryId: string }) {
+  const data = useQuery(api.reactions.countsForMemory, { memoryId: memoryId as any });
+  const toggle = useMutation(api.reactions.toggle);
+  const liked = data?.liked ?? false;
   return (
-    <View style={styles.skeleton}>
-      <View style={styles.skeletonDateRow}>
-        <View style={styles.skeletonLine} />
-        <View style={[styles.skeletonLine, { width: 64 }]} />
-      </View>
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <View style={styles.skeletonPhoto} />
-        <View style={{ flex: 1, gap: 8 }}>
-          <View style={[styles.skeletonLine, { width: "75%" }]} />
-          <View style={[styles.skeletonPhoto, { height: 40, borderRadius: 12 }]} />
-        </View>
-      </View>
-    </View>
+    <TouchableOpacity
+      style={styles.heartBtn}
+      activeOpacity={0.8}
+      onPress={() => toggle({ memoryId: memoryId as any })}
+    >
+      <Heart
+        size={20}
+        color={liked ? colors.coral : "#fff"}
+        fill={liked ? colors.coral : "none"}
+        strokeWidth={liked ? 0 : 1.8}
+      />
+    </TouchableOpacity>
   );
 }
 
@@ -262,6 +298,7 @@ const styles = StyleSheet.create({
   addPartnerLabel: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "66" },
   skeletonAvatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.border },
 
+
   // Card spacing
   cardMt: { marginTop: 20 },
   cardMtSmall: { marginTop: 12 },
@@ -290,34 +327,58 @@ const styles = StyleSheet.create({
   openListRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 2, marginTop: 4 },
   openListText: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.coral },
 
-  // Timeline
-  timelineSection: { marginTop: 24, gap: 12 },
-  timelineHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-  timelineTitle: { fontFamily: "PatrickHand", fontSize: 18, fontWeight: "600", color: colors.ink },
-  addMemoryBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.pink, alignItems: "center", justifyContent: "center", shadowColor: colors.pink, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.5, shadowRadius: 10, elevation: 4 },
-  addMemoryPlus: { fontSize: 22, color: "#fff", lineHeight: 26 },
+  // Recent memories
+  recentSection: { marginTop: 24 },
+  recentHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  recentTitle: { fontFamily: "PatrickHand", fontSize: 18, fontWeight: "600", color: colors.ink },
+  seeAll: { fontFamily: "PatrickHand", fontSize: 14, fontWeight: "600", color: colors.coral },
 
-  // Memory card
-  memoryCard: { padding: 12 },
-  memoryDateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  memoryDate: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.ink },
-  memoryWeekday: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "CC" },
-  memoryBody: { flexDirection: "row", gap: 8, alignItems: "center" },
-  memoryPhoto: { width: 80, height: 80, borderRadius: 16, flexShrink: 0 },
-  memoryPhotoPlaceholder: { backgroundColor: colors.border },
-  memoryInfo: { flex: 1, gap: 6 },
-  memoryTitle: { fontFamily: "PatrickHand", fontSize: 15, fontWeight: "600", color: colors.ink, lineHeight: 20 },
-  memoryCaptionBox: { backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, transform: [{ rotate: "-0.5deg" }] },
-  memoryCaption: { fontFamily: "PatrickHand", fontSize: 12, color: colors.brown, lineHeight: 16 },
+  memoryCard: { width: CARD_W, borderRadius: 20, overflow: "hidden" },
+  memoryCardBg: { width: CARD_W, height: 240, justifyContent: "space-between" },
+  memoryCardImg: { borderRadius: 20 },
+
+  cardGradient: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 20,
+  },
+
+  dateBadge: {
+    margin: 14,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.2)",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  dateBadgeText: { fontFamily: "PatrickHand", fontSize: 12, fontWeight: "600", color: "#fff" },
+
+  cardBottom: {
+    flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingBottom: 16, gap: 8,
+  },
+  cardBottomText: { flex: 1 },
+  cardTitle: { fontFamily: "PatrickHand", fontSize: 22, fontWeight: "600", color: "#fff", lineHeight: 28, marginBottom: 4 },
+  cardCaption: { fontFamily: "PatrickHand", fontSize: 13, color: "rgba(255,255,255,0.82)", lineHeight: 18 },
+  heartBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center", justifyContent: "center",
+    marginBottom: 2,
+  },
+
+  dotRow: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 12 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.brown + "40" },
+  dotActive: { width: 18, backgroundColor: colors.coral },
+
+  memoryCardSkeleton: { width: CARD_W, height: 240, borderRadius: 20, backgroundColor: colors.border },
 
   // Empty state
-  emptyCard: { padding: 24, alignItems: "center" },
-  emptyTitle: { fontFamily: "Caveat-Bold", fontSize: 20, color: colors.coral, marginBottom: 4 },
-  emptySubtitle: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "99" },
-
-  // Skeleton
-  skeleton: { backgroundColor: "#fff", borderRadius: 24, padding: 12, gap: 8 },
-  skeletonDateRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  skeletonLine: { height: 14, width: 112, borderRadius: 8, backgroundColor: colors.border },
-  skeletonPhoto: { width: 80, height: 80, borderRadius: 16, backgroundColor: colors.border },
+  emptyCard: {
+    width: CARD_W, height: 240, borderRadius: 20,
+    backgroundColor: colors.paper, borderWidth: 2,
+    borderColor: colors.brown + "30", borderStyle: "dashed",
+    alignItems: "center", justifyContent: "center", gap: 8,
+  },
+  emptyTitle: { fontFamily: "Caveat-Bold", fontSize: 22, color: colors.coral },
+  emptySubtitle: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown + "99" },
 });
