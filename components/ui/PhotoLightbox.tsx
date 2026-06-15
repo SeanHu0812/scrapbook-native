@@ -1,10 +1,10 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import {
-  Modal, View, Image, FlatList, TouchableOpacity, Text, StyleSheet,
-  Dimensions, StatusBar, Share, Alert, ActivityIndicator, Platform,
+  Modal, View, Image, FlatList, TextInput, TouchableOpacity, Text, StyleSheet,
+  Dimensions, StatusBar, Share, Alert, ActivityIndicator, Platform, Keyboard,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { X, Heart, MessageCircle, Share2, Download } from "lucide-react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { X, Heart, MessageCircle, Share2, Download, Send } from "lucide-react-native";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
 import { colors } from "@/theme/colors";
@@ -21,27 +21,50 @@ interface PhotoLightboxProps {
   photos: LightboxPhoto[];
   initialIndex?: number;
   onClose: () => void;
-  // Toolbar callbacks — all optional so the component works anywhere
   favorited?: boolean;
   onFavorite?: () => void;
-  onComment?: () => void;
+  onSendComment?: (text: string) => Promise<void>;
   memoryTitle?: string;
 }
 
 export function PhotoLightbox({
   visible, photos, initialIndex = 0, onClose,
-  favorited, onFavorite, onComment, memoryTitle,
+  favorited, onFavorite, onSendComment, memoryTitle,
 }: PhotoLightboxProps) {
+  const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList>(null);
+  const commentRef = useRef<TextInput>(null);
+
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [downloading, setDownloading] = useState(false);
+  const [commentOpen, setCommentOpen] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  // Sync index and scroll position each time the lightbox opens
+  // Keyboard height tracking — drives comment bar position
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const show = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  // Reset comment state when lightbox closes
+  useEffect(() => {
+    if (!visible) {
+      setCommentOpen(false);
+      setCommentText("");
+      setKeyboardHeight(0);
+    }
+  }, [visible]);
+
+  // Sync scroll position when lightbox opens at a specific index
   useEffect(() => {
     if (!visible) return;
     setCurrentIndex(initialIndex);
     if (initialIndex > 0) {
-      // Give the FlatList a tick to mount before scrolling
       const t = setTimeout(() => {
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false });
       }, 50);
@@ -49,16 +72,50 @@ export function PhotoLightbox({
     }
   }, [visible, initialIndex]);
 
-  // Use a ref for the callback so it never stale-closes over currentIndex
   const currentIndexRef = useRef(currentIndex);
   currentIndexRef.current = currentIndex;
 
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
-  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
-    if (viewableItems.length > 0 && viewableItems[0].index != null) {
-      setCurrentIndex(viewableItems[0].index);
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
+      if (viewableItems.length > 0 && viewableItems[0].index != null) {
+        setCurrentIndex(viewableItems[0].index);
+      }
+    },
+    []
+  );
+
+  const getItemLayout = useCallback(
+    (_: unknown, index: number) => ({ length: SCREEN_W, offset: SCREEN_W * index, index }),
+    []
+  );
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
+
+  function openComment() {
+    setCommentOpen(true);
+    setTimeout(() => commentRef.current?.focus(), 80);
+  }
+
+  function closeComment() {
+    Keyboard.dismiss();
+    setCommentOpen(false);
+    setCommentText("");
+  }
+
+  async function handleSend() {
+    if (!commentText.trim() || !onSendComment || sending) return;
+    setSending(true);
+    try {
+      await onSendComment(commentText.trim());
+      setCommentText("");
+      closeComment();
+    } catch {
+      Alert.alert("Error", "Could not send comment.");
+    } finally {
+      setSending(false);
     }
-  }, []);
+  }
 
   const handleShare = useCallback(async () => {
     const url = photos[currentIndexRef.current]?.url;
@@ -94,10 +151,10 @@ export function PhotoLightbox({
     }
   }, [photos, downloading]);
 
-  const getItemLayout = useCallback(
-    (_: unknown, index: number) => ({ length: SCREEN_W, offset: SCREEN_W * index, index }),
-    []
-  );
+  // The comment bar floats just above the keyboard.
+  // When keyboard is hidden it sits above the toolbar (toolbar ≈ 56px + bottom inset).
+  const toolbarHeight = 56 + insets.bottom;
+  const commentBarBottom = keyboardHeight > 0 ? keyboardHeight : toolbarHeight;
 
   return (
     <Modal
@@ -105,7 +162,7 @@ export function PhotoLightbox({
       transparent={false}
       animationType="fade"
       statusBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={commentOpen ? closeComment : onClose}
       hardwareAccelerated
     >
       <StatusBar hidden />
@@ -125,14 +182,15 @@ export function PhotoLightbox({
           viewabilityConfig={viewabilityConfig}
           decelerationRate="fast"
           bounces={photos.length > 1}
+          scrollEnabled={!commentOpen}
           renderItem={({ item }) => (
-            <View style={styles.page}>
-              <Image
-                source={{ uri: item.url }}
-                style={styles.image}
-                resizeMode="contain"
-              />
-            </View>
+            <TouchableOpacity
+              activeOpacity={1}
+              style={styles.page}
+              onPress={commentOpen ? closeComment : undefined}
+            >
+              <Image source={{ uri: item.url }} style={styles.image} resizeMode="contain" />
+            </TouchableOpacity>
           )}
         />
 
@@ -148,12 +206,11 @@ export function PhotoLightbox({
             <View />
           )}
 
-          {/* Right slot placeholder to keep counter centered */}
           <View style={{ width: 44 }} />
         </SafeAreaView>
 
         {/* ── Dot indicators ──────────────────────────────────────────── */}
-        {photos.length > 1 && (
+        {photos.length > 1 && !commentOpen && (
           <View style={styles.dotRow} pointerEvents="none">
             {photos.map((_, i) => (
               <View key={i} style={[styles.dot, i === currentIndex && styles.dotActive]} />
@@ -161,8 +218,44 @@ export function PhotoLightbox({
           </View>
         )}
 
+        {/* ── Inline comment composer ──────────────────────────────────── */}
+        {commentOpen && (
+          <View style={[styles.commentBar, { bottom: commentBarBottom }]}>
+            {/* Dismiss handle */}
+            <TouchableOpacity style={styles.commentClose} onPress={closeComment} hitSlop={8}>
+              <X size={16} color={colors.brown} strokeWidth={2.5} />
+            </TouchableOpacity>
+
+            <TextInput
+              ref={commentRef}
+              style={styles.commentInput}
+              value={commentText}
+              onChangeText={setCommentText}
+              placeholder="Write a comment…"
+              placeholderTextColor={colors.brown + "80"}
+              returnKeyType="send"
+              onSubmitEditing={handleSend}
+              blurOnSubmit={false}
+              autoCorrect
+              multiline={false}
+            />
+
+            <TouchableOpacity
+              style={[styles.sendBtn, (!commentText.trim() || sending) && styles.sendBtnDisabled]}
+              onPress={handleSend}
+              disabled={!commentText.trim() || sending}
+              activeOpacity={0.8}
+            >
+              {sending
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Send size={15} color="#fff" strokeWidth={2.2} />
+              }
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ── Bottom toolbar ──────────────────────────────────────────── */}
-        <SafeAreaView edges={["bottom"]} style={styles.toolbar}>
+        <SafeAreaView edges={["bottom"]} style={[styles.toolbar, commentOpen && styles.toolbarDimmed]}>
           <ToolbarBtn
             icon={
               <Heart
@@ -177,9 +270,16 @@ export function PhotoLightbox({
             active={favorited}
           />
           <ToolbarBtn
-            icon={<MessageCircle size={26} color="#fff" strokeWidth={1.8} />}
+            icon={
+              <MessageCircle
+                size={26}
+                color={commentOpen ? colors.coral : "#fff"}
+                strokeWidth={1.8}
+              />
+            }
             label="Comment"
-            onPress={onComment}
+            onPress={onSendComment ? openComment : undefined}
+            active={commentOpen}
           />
           <ToolbarBtn
             icon={<Share2 size={26} color="#fff" strokeWidth={1.8} />}
@@ -240,7 +340,7 @@ const styles = StyleSheet.create({
     height: SCREEN_H,
   },
 
-  // Top bar — absolute so it floats over the image
+  // Top bar
   topBar: {
     position: "absolute",
     top: 0, left: 0, right: 0,
@@ -249,7 +349,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 12,
     paddingTop: 8,
-    // gradient-like fade from black
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   closeBtn: {
@@ -263,11 +362,10 @@ const styles = StyleSheet.create({
     fontFamily: "PatrickHand",
     fontSize: 16,
     fontWeight: "600",
-    textAlign: "center",
     letterSpacing: 0.5,
   },
 
-  // Dot indicators sit just above the toolbar
+  // Dot indicators
   dotRow: {
     position: "absolute",
     bottom: 110,
@@ -285,6 +383,50 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
 
+  // Inline comment bar — floats above keyboard / toolbar
+  commentBar: {
+    position: "absolute",
+    left: 0, right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.cream,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  commentClose: {
+    width: 30, height: 30,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.paper,
+    borderRadius: 15,
+  },
+  commentInput: {
+    flex: 1,
+    fontFamily: "PatrickHand",
+    fontSize: 15,
+    color: colors.ink,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  sendBtn: {
+    width: 36, height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.coral,
+    alignItems: "center", justifyContent: "center",
+  },
+  sendBtnDisabled: { opacity: 0.4 },
+
   // Bottom toolbar
   toolbar: {
     position: "absolute",
@@ -295,6 +437,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.12)",
+  },
+  toolbarDimmed: {
+    opacity: 0.35,
   },
 });
 

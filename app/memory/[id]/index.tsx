@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
   StyleSheet, ActivityIndicator, Image, Modal, Alert, Dimensions,
@@ -59,7 +59,6 @@ export default function MemoryDetailScreen() {
   const [uploading, setUploading] = useState(false);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const commentInputRef = useRef<TextInput>(null);
 
   // Audio
   const player = useAudioPlayer(memory?.audioUrl ?? null);
@@ -339,7 +338,6 @@ export default function MemoryDetailScreen() {
               />
             )}
             <TextInput
-              ref={commentInputRef}
               style={styles.composerInput}
               value={draft}
               onChangeText={setDraft}
@@ -372,9 +370,8 @@ export default function MemoryDetailScreen() {
         onClose={() => setLightboxIndex(null)}
         favorited={liked}
         onFavorite={() => toggleHeart({ memoryId })}
-        onComment={() => {
-          setLightboxIndex(null);
-          setTimeout(() => commentInputRef.current?.focus(), 350);
+        onSendComment={async (text) => {
+          await addComment({ memoryId, body: text });
         }}
         memoryTitle={memory?.title}
       />
