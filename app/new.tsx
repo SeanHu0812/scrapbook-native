@@ -10,14 +10,8 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import {
-  useAudioRecorder, useAudioRecorderState, useAudioPlayer, useAudioPlayerStatus,
-  requestRecordingPermissionsAsync, setAudioModeAsync, RecordingPresets,
-} from "expo-audio";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import {
-  X, CalendarDays, Pencil, Mic, Square, MapPin, Camera, Plus,
-} from "lucide-react-native";
+import { X, CalendarDays, Pencil, MapPin, Camera, Plus } from "lucide-react-native";
 import { colors } from "@/theme/colors";
 
 const SCENES = ["coffee", "couple", "sunset", "flowers", "airplane", "river"] as const;
@@ -31,9 +25,6 @@ function formatDisplayDate(iso: string) {
   const [y, m, d] = iso.split("-").map(Number);
   const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   return `${months[m - 1]} ${d}, ${y}`;
-}
-function formatDuration(s: number) {
-  return `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 }
 
 type UploadedPhoto = { storageId: Id<"_storage">; previewUrl: string };
@@ -49,20 +40,8 @@ export default function NewMemoryScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [location, setLocation] = useState("");
 
-  // Photos
   const [photos, setPhotos] = useState<UploadedPhoto[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-
-  // Voice
-  const [audioUri, setAudioUri] = useState<string | null>(null);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder, 500);
-  const player = useAudioPlayer(audioUri ?? null);
-  const playerStatus = useAudioPlayerStatus(player);
-
-  const isRecording = recorderState.isRecording;
-  const isPlaying = playerStatus.playing;
-  const recordingSeconds = Math.floor((recorderState.durationMillis ?? 0) / 1000);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -105,39 +84,6 @@ export default function NewMemoryScreen() {
     setPhotos((cur) => cur.filter((p) => p.storageId !== storageId));
   }
 
-  // ── Voice ─────────────────────────────────────────────────────────────────
-
-  async function startRecording() {
-    try {
-      const { granted } = await requestRecordingPermissionsAsync();
-      if (!granted) { Alert.alert("Permission needed", "Allow microphone access to record."); return; }
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-    } catch {
-      setError("Microphone access denied.");
-    }
-  }
-
-  async function stopRecording() {
-    await recorder.stop();
-    await setAudioModeAsync({ allowsRecording: false });
-    if (recorder.uri) setAudioUri(recorder.uri);
-  }
-
-  function togglePlayback() {
-    if (isPlaying) {
-      player.pause();
-    } else {
-      player.play();
-    }
-  }
-
-  function discardAudio() {
-    player.remove();
-    setAudioUri(null);
-  }
-
   // ── Save ──────────────────────────────────────────────────────────────────
 
   async function handleSave() {
@@ -146,18 +92,6 @@ export default function NewMemoryScreen() {
     setError("");
     setSaving(true);
     try {
-      let audioStorageId: Id<"_storage"> | undefined;
-      if (audioUri) {
-        const uploadUrl = await generateUploadUrl();
-        const uploadResult = await FileSystem.uploadAsync(uploadUrl, audioUri, {
-          httpMethod: "POST",
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          headers: { "Content-Type": "audio/m4a" },
-          mimeType: "audio/m4a",
-        });
-        const { storageId } = JSON.parse(uploadResult.body) as { storageId: Id<"_storage"> };
-        audioStorageId = storageId;
-      }
       const scene = photos.length > 0 ? "photo" : SCENES[Math.floor(Math.random() * SCENES.length)];
       const id = await createMemory({
         title: resolvedTitle,
@@ -167,7 +101,6 @@ export default function NewMemoryScreen() {
         scene,
         location: location.trim() || undefined,
         photoStorageIds: photos.map((p) => p.storageId),
-        audioStorageId,
       });
       router.replace(`/memory/${id}`);
     } catch (e: unknown) {
@@ -187,9 +120,9 @@ export default function NewMemoryScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>New memory</Text>
         <TouchableOpacity
-          style={[styles.saveBtn, (saving || uploadingPhoto || isRecording) && styles.disabled]}
+          style={[styles.saveBtn, (saving || uploadingPhoto) && styles.disabled]}
           onPress={handleSave}
-          disabled={saving || uploadingPhoto || isRecording}
+          disabled={saving || uploadingPhoto}
           activeOpacity={0.85}
         >
           {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveBtnText}>Save</Text>}
@@ -212,7 +145,7 @@ export default function NewMemoryScreen() {
           <Text style={styles.weekday}>{weekdayOf(date)} ☀️</Text>
         </View>
 
-        {/* Date picker modal (Android) / inline (iOS) */}
+        {/* Date picker */}
         {showDatePicker && (
           Platform.OS === "ios" ? (
             <Modal transparent animationType="fade">
@@ -273,7 +206,7 @@ export default function NewMemoryScreen() {
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        {/* ── Photos ── */}
+        {/* Photos */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Photos</Text>
           {photos.length === 0 ? (
@@ -306,39 +239,7 @@ export default function NewMemoryScreen() {
           )}
         </View>
 
-        {/* ── Voice memo ── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Voice memo</Text>
-          {audioUri ? (
-            <View style={styles.audioCard}>
-              <TouchableOpacity style={styles.audioPlayBtn} onPress={togglePlayback}>
-                <Text style={styles.audioPlayIcon}>{isPlaying ? "⏸" : "▶"}</Text>
-              </TouchableOpacity>
-              <Text style={styles.audioDuration}>{formatDuration(recordingSeconds)}</Text>
-              <TouchableOpacity onPress={discardAudio} style={styles.audioDiscard}>
-                <X size={14} color={colors.brown + "80"} />
-                <Text style={styles.audioDiscardText}>Discard</Text>
-              </TouchableOpacity>
-            </View>
-          ) : isRecording ? (
-            <View style={styles.recordingRow}>
-              <View style={styles.recordingLeft}>
-                <View style={styles.recordingDot} />
-                <Text style={styles.recordingTimer}>{formatDuration(recordingSeconds)}</Text>
-              </View>
-              <TouchableOpacity style={styles.stopBtn} onPress={stopRecording}>
-                <Square size={16} color="#fff" fill="#fff" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.recordBtn} onPress={startRecording}>
-              <Mic size={18} color={colors.brown + "99"} strokeWidth={1.8} />
-              <Text style={styles.recordBtnText}>Tap to record (up to 60s)</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* ── Location ── */}
+        {/* Location */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Location</Text>
           {location ? (
@@ -373,7 +274,6 @@ export default function NewMemoryScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.cream },
 
-  // Header
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border + "80",
@@ -391,25 +291,21 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 },
 
-  // Date
   dateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
   dateLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
   dateText: { fontFamily: "PatrickHand", fontSize: 15, fontWeight: "600", color: colors.ink },
   weekday: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown },
 
-  // Date modal
   dateModalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   dateModalCard: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 32 },
   dateModalDone: { alignItems: "center", paddingVertical: 12 },
   dateModalDoneText: { fontFamily: "PatrickHand", fontSize: 16, fontWeight: "600", color: colors.coral },
 
-  // Title
   titleInput: {
     fontFamily: "PatrickHand", fontSize: 18, fontWeight: "600", color: colors.ink,
     backgroundColor: "transparent", paddingVertical: 0, marginBottom: 12,
   },
 
-  // Body
   bodyCard: {
     backgroundColor: "#fff", borderRadius: 20,
     shadowColor: "#6C5A4E", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8,
@@ -422,18 +318,15 @@ const styles = StyleSheet.create({
 
   error: { fontFamily: "PatrickHand", fontSize: 13, color: colors.coral, marginBottom: 8 },
 
-  // Section
   section: { marginTop: 24 },
   sectionLabel: { fontFamily: "PatrickHand", fontSize: 14, fontWeight: "600", color: colors.brown, marginBottom: 10 },
 
-  // Photo dropzone
   photoDropzone: {
     borderWidth: 2, borderColor: colors.brown + "40", borderStyle: "dashed",
     borderRadius: 20, height: 140, alignItems: "center", justifyContent: "center", gap: 8,
   },
   dropzoneText: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown + "80" },
 
-  // Photo grid
   photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   photoThumb: { width: 90, height: 90, borderRadius: 16, overflow: "hidden" },
   photoImg: { width: "100%", height: "100%" },
@@ -444,41 +337,6 @@ const styles = StyleSheet.create({
   photoLoading: { backgroundColor: colors.border, alignItems: "center", justifyContent: "center" },
   photoAdd: { backgroundColor: colors.paper, borderWidth: 1.5, borderColor: colors.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
 
-  // Voice
-  recordBtn: {
-    flexDirection: "row", alignItems: "center", gap: 10,
-    borderWidth: 2, borderColor: colors.brown + "40", borderStyle: "dashed",
-    borderRadius: 20, paddingHorizontal: 20, paddingVertical: 16,
-  },
-  recordBtnText: { fontFamily: "PatrickHand", fontSize: 14, fontWeight: "600", color: colors.brown + "99" },
-  recordingRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    borderWidth: 2, borderColor: colors.coral, borderRadius: 20,
-    backgroundColor: colors.pinkSoft, paddingHorizontal: 20, paddingVertical: 14,
-  },
-  recordingLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  recordingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.coral },
-  recordingTimer: { fontFamily: "PatrickHand", fontSize: 16, fontWeight: "600", color: colors.coral },
-  stopBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: colors.coral, alignItems: "center", justifyContent: "center",
-    shadowColor: colors.coral, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8,
-  },
-  audioCard: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    backgroundColor: "#fff", borderRadius: 20, padding: 16,
-    borderWidth: 1, borderColor: colors.border,
-  },
-  audioPlayBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: colors.coral, alignItems: "center", justifyContent: "center",
-  },
-  audioPlayIcon: { fontSize: 14, color: "#fff" },
-  audioDuration: { flex: 1, fontFamily: "PatrickHand", fontSize: 15, color: colors.brown },
-  audioDiscard: { flexDirection: "row", alignItems: "center", gap: 4 },
-  audioDiscardText: { fontFamily: "PatrickHand", fontSize: 12, color: colors.brown + "80" },
-
-  // Location
   locationInput: {
     flexDirection: "row", alignItems: "center", gap: 10,
     backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: colors.border,

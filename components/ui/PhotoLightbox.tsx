@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import {
-  Modal, View, Image, Animated, FlatList, TextInput, TouchableOpacity,
+  Modal, View, Image, Animated, FlatList, ScrollView, TextInput, TouchableOpacity,
   Text, StyleSheet, Dimensions, StatusBar, Share, Alert,
   ActivityIndicator, Platform, Keyboard,
 } from "react-native";
@@ -12,12 +12,11 @@ import { colors } from "@/theme/colors";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
-// Filmstrip at 50% of the original 52px thumbnails
 const THUMB_SIZE    = 26;
-const THUMB_MARGIN  = 1.5;  // each side on non-active items  → 3px between items
-const THUMB_MARGIN_ACTIVE = 5; // each side on active item → breathing room
-const THUMB_STRIDE  = THUMB_SIZE + THUMB_MARGIN * 2; // approx stride for layout calc
-const FILMSTRIP_H   = THUMB_SIZE + 8; // 4px top/bottom padding → 34px total
+const THUMB_GAP     = 5;          // uniform gap between every thumbnail
+const ITEM_W        = THUMB_SIZE + THUMB_GAP; // 31px — constant stride
+const FILM_EDGE_PAD = (SCREEN_W - THUMB_SIZE) / 2; // centers item 0; scroll x=i*ITEM_W centers item i
+const FILMSTRIP_H   = THUMB_SIZE + 8;
 const TOOLBAR_INNER = 42;
 
 export interface LightboxPhoto {
@@ -32,7 +31,7 @@ interface PhotoLightboxProps {
   onClose: () => void;
   favorited?: boolean;
   onFavorite?: () => void;
-  onSendComment?: (text: string) => Promise<void>;
+  onSendComment?: (text: string, photoStorageId?: string) => Promise<void>;
   memoryTitle?: string;
 }
 
@@ -41,9 +40,9 @@ export function PhotoLightbox({
   favorited, onFavorite, onSendComment, memoryTitle,
 }: PhotoLightboxProps) {
   const insets = useSafeAreaInsets();
-  const listRef    = useRef<FlatList>(null);
-  const filmRef    = useRef<FlatList>(null);
-  const commentRef = useRef<TextInput>(null);
+  const listRef     = useRef<FlatList>(null);
+  const filmRef     = useRef<ScrollView>(null);
+  const commentRef  = useRef<TextInput>(null);
 
   const [currentIndex, setCurrentIndex]     = useState(initialIndex);
   const [downloading, setDownloading]       = useState(false);
@@ -52,19 +51,17 @@ export function PhotoLightbox({
   const [sending, setSending]               = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  // One Animated.Value per thumbnail — created/reset when photo count changes
   const thumbScalesRef = useRef<Animated.Value[]>([]);
   if (thumbScalesRef.current.length !== photos.length) {
     thumbScalesRef.current = photos.map(() => new Animated.Value(1));
   }
   const thumbScales = thumbScalesRef.current;
 
-  // Chrome height: filmstrip (only when >1 photo) + toolbar + safe area
-  const hasFilmstrip = photos.length > 1;
-  const chromeHeight = (hasFilmstrip ? FILMSTRIP_H : 0) + TOOLBAR_INNER + insets.bottom;
-  const commentBarBottom = keyboardHeight > 0 ? keyboardHeight : chromeHeight;
+  const hasFilmstrip  = photos.length > 1;
+  const toolbarHeight = TOOLBAR_INNER + insets.bottom;
+  const chromeHeight  = (hasFilmstrip ? FILMSTRIP_H : 0) + toolbarHeight;
 
-  // ── Keyboard tracking ─────────────────────────────────────────────────────
+  // ── Keyboard tracking ──────────────────────────────────────────────────────
 
   useEffect(() => {
     const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -74,7 +71,7 @@ export function PhotoLightbox({
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  // ── Reset on close ────────────────────────────────────────────────────────
+  // ── Reset on close ─────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!visible) {
@@ -94,27 +91,22 @@ export function PhotoLightbox({
         listRef.current?.scrollToIndex({ index: initialIndex, animated: false });
       }
       if (hasFilmstrip) {
-        filmRef.current?.scrollToIndex({ index: initialIndex, animated: false, viewPosition: 0.5 });
+        filmRef.current?.scrollTo({ x: initialIndex * ITEM_W, animated: false });
       }
     }, 50);
     return () => clearTimeout(t);
   }, [visible, initialIndex, hasFilmstrip]);
 
-  // ── Thumbnail pulse + filmstrip centering on index change ─────────────────
+  // ── Thumbnail pulse + filmstrip centering ──────────────────────────────────
 
   useEffect(() => {
-    // Reset all others immediately
     thumbScales.forEach((s, i) => {
-      if (i !== currentIndex) {
-        s.stopAnimation();
-        s.setValue(1);
-      }
+      if (i !== currentIndex) { s.stopAnimation(); s.setValue(1); }
     });
 
-    // Brief scale-up then spring back to normal
     const active = thumbScales[currentIndex];
     if (active) {
-      active.setValue(1.45);
+      active.setValue(1.135);
       Animated.spring(active, {
         toValue: 1,
         useNativeDriver: true,
@@ -123,17 +115,13 @@ export function PhotoLightbox({
       }).start();
     }
 
-    // Keep selected thumbnail centered in the filmstrip
     if (hasFilmstrip && photos.length > 1) {
-      filmRef.current?.scrollToIndex({
-        index: currentIndex,
-        animated: true,
-        viewPosition: 0.5,
-      });
+      // x = i * ITEM_W exactly centers item i when paddingHorizontal = FILM_EDGE_PAD
+      filmRef.current?.scrollTo({ x: currentIndex * ITEM_W, animated: true });
     }
   }, [currentIndex, hasFilmstrip]);
 
-  // ── FlatList helpers ──────────────────────────────────────────────────────
+  // ── FlatList helpers ───────────────────────────────────────────────────────
 
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
 
@@ -151,18 +139,7 @@ export function PhotoLightbox({
     []
   );
 
-  // Film stride: non-active items take THUMB_SIZE + 2*THUMB_MARGIN,
-  // active adds extra margin — approximate with average for getItemLayout
-  const getFilmLayout = useCallback(
-    (_: unknown, index: number) => ({
-      length: THUMB_SIZE + THUMB_MARGIN * 2,
-      offset: (THUMB_SIZE + THUMB_MARGIN * 2) * index,
-      index,
-    }),
-    []
-  );
-
-  // ── Actions ───────────────────────────────────────────────────────────────
+  // ── Actions ────────────────────────────────────────────────────────────────
 
   function jumpToPhoto(index: number) {
     setCurrentIndex(index);
@@ -184,7 +161,7 @@ export function PhotoLightbox({
     if (!commentText.trim() || !onSendComment || sending) return;
     setSending(true);
     try {
-      await onSendComment(commentText.trim());
+      await onSendComment(commentText.trim(), photos[currentIndex]?.storageId);
       setCommentText("");
       closeComment();
     } catch {
@@ -228,7 +205,7 @@ export function PhotoLightbox({
     }
   }, [photos, currentIndex, downloading]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <Modal
@@ -242,7 +219,7 @@ export function PhotoLightbox({
       <StatusBar hidden />
       <View style={styles.root}>
 
-        {/* ── Main photo pager ────────────────────────────────────────── */}
+        {/* ── Main photo pager ──────────────────────────────────────────── */}
         <FlatList
           ref={listRef}
           data={photos}
@@ -268,7 +245,7 @@ export function PhotoLightbox({
           )}
         />
 
-        {/* ── Top bar ─────────────────────────────────────────────────── */}
+        {/* ── Top bar ───────────────────────────────────────────────────── */}
         <SafeAreaView style={styles.topBar} pointerEvents="box-none">
           <TouchableOpacity style={styles.closeBtn} onPress={onClose} hitSlop={12} activeOpacity={0.75}>
             <X size={18} color="#fff" strokeWidth={2.5} />
@@ -281,44 +258,90 @@ export function PhotoLightbox({
           <View style={{ width: 38 }} />
         </SafeAreaView>
 
-        {/* ── Filmstrip ───────────────────────────────────────────────── */}
-        {hasFilmstrip && (
-          <View style={[styles.filmstrip, { bottom: TOOLBAR_INNER + insets.bottom }]}>
-            <FlatList
+        {/* ── Filmstrip — sits above toolbar, transparent bg ────────────── */}
+        {hasFilmstrip && !commentOpen && (
+          <View style={[styles.filmstrip, { bottom: toolbarHeight }]}>
+            <ScrollView
               ref={filmRef}
-              data={photos}
-              keyExtractor={(_, i) => `f${i}`}
               horizontal
               showsHorizontalScrollIndicator={false}
-              getItemLayout={getFilmLayout}
-              contentContainerStyle={styles.filmContent}
-              renderItem={({ item, index }) => {
+              scrollEnabled={false}
+              contentContainerStyle={{
+                paddingHorizontal: FILM_EDGE_PAD,
+                paddingVertical: 4,
+              }}
+            >
+              {photos.map((item, index) => {
                 const selected = index === currentIndex;
                 const scale = thumbScales[index] ?? new Animated.Value(1);
                 return (
                   <TouchableOpacity
+                    key={index}
                     onPress={() => jumpToPhoto(index)}
                     activeOpacity={0.75}
-                    style={[
-                      styles.thumbWrap,
-                      selected ? styles.thumbWrapActive : styles.thumbWrapIdle,
-                    ]}
+                    style={styles.thumbWrap}
                   >
                     <Animated.Image
                       source={{ uri: item.url }}
-                      style={[styles.thumbImg, { transform: [{ scale }] }]}
+                      style={[
+                        styles.thumbImg,
+                        { opacity: selected ? 1 : 0.5, transform: [{ scale }] },
+                      ]}
                       resizeMode="cover"
                     />
                   </TouchableOpacity>
                 );
-              }}
-            />
+              })}
+            </ScrollView>
           </View>
         )}
 
-        {/* ── Inline comment composer ──────────────────────────────────── */}
+        {/* ── Toolbar ───────────────────────────────────────────────────── */}
+        <View style={[styles.toolbar, { paddingBottom: insets.bottom, height: toolbarHeight }]}>
+          <ToolBtn icon={<Share2 size={22} color="#fff" strokeWidth={1.8} />} onPress={handleShare} />
+          <ToolBtn
+            icon={
+              <Heart
+                size={22}
+                color={favorited ? colors.coral : "#fff"}
+                fill={favorited ? colors.coral : "none"}
+                strokeWidth={favorited ? 0 : 1.8}
+              />
+            }
+            onPress={onFavorite}
+          />
+          <ToolBtn
+            icon={
+              <MessageCircle
+                size={22}
+                color={commentOpen ? colors.coral : "#fff"}
+                strokeWidth={1.8}
+              />
+            }
+            onPress={onSendComment ? openComment : undefined}
+          />
+          <ToolBtn
+            icon={
+              downloading
+                ? <ActivityIndicator color="#fff" size="small" style={{ width: 22, height: 22 }} />
+                : <Download size={22} color="#fff" strokeWidth={1.8} />
+            }
+            onPress={handleDownload}
+          />
+        </View>
+
+        {/* ── Comment bar — overlays the toolbar, never covers the photo ── */}
         {commentOpen && (
-          <View style={[styles.commentBar, { bottom: commentBarBottom }]}>
+          <View
+            style={[
+              styles.commentBar,
+              {
+                bottom: keyboardHeight,
+                paddingBottom: keyboardHeight > 0 ? 8 : insets.bottom,
+                minHeight: toolbarHeight,
+              },
+            ]}
+          >
             <TouchableOpacity style={styles.commentDismiss} onPress={closeComment} hitSlop={8}>
               <X size={15} color="rgba(255,255,255,0.55)" strokeWidth={2.5} />
             </TouchableOpacity>
@@ -351,46 +374,6 @@ export function PhotoLightbox({
             </TouchableOpacity>
           </View>
         )}
-
-        {/* ── Toolbar ─────────────────────────────────────────────────── */}
-        <View
-          style={[
-            styles.toolbar,
-            { paddingBottom: insets.bottom, height: TOOLBAR_INNER + insets.bottom },
-            commentOpen && styles.toolbarDimmed,
-          ]}
-        >
-          <ToolBtn icon={<Share2 size={22} color="#fff" strokeWidth={1.8} />} onPress={handleShare} />
-          <ToolBtn
-            icon={
-              <Heart
-                size={22}
-                color={favorited ? colors.coral : "#fff"}
-                fill={favorited ? colors.coral : "none"}
-                strokeWidth={favorited ? 0 : 1.8}
-              />
-            }
-            onPress={onFavorite}
-          />
-          <ToolBtn
-            icon={
-              <MessageCircle
-                size={22}
-                color={commentOpen ? colors.coral : "#fff"}
-                strokeWidth={1.8}
-              />
-            }
-            onPress={onSendComment ? openComment : undefined}
-          />
-          <ToolBtn
-            icon={
-              downloading
-                ? <ActivityIndicator color="#fff" size="small" style={{ width: 22, height: 22 }} />
-                : <Download size={22} color="#fff" strokeWidth={1.8} />
-            }
-            onPress={handleDownload}
-          />
-        </View>
 
       </View>
     </Modal>
@@ -425,7 +408,6 @@ const styles = StyleSheet.create({
   },
   image: { width: SCREEN_W, height: SCREEN_H },
 
-  // Top bar
   topBar: {
     position: "absolute",
     top: 0, left: 0, right: 0,
@@ -450,50 +432,44 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // Filmstrip — transparent background, sits above toolbar
   filmstrip: {
     position: "absolute",
     left: 0, right: 0,
     height: FILMSTRIP_H,
-    // no background — photo shows through
-  },
-  filmContent: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    alignItems: "center",
   },
 
-  // Thumbnail wrappers — overflow visible so the scale pops outside the box
   thumbWrap: {
-    overflow: "visible",
     width: THUMB_SIZE,
     height: THUMB_SIZE,
-    borderRadius: 3,
-  },
-  thumbWrapIdle: {
-    marginHorizontal: THUMB_MARGIN,
-  },
-  thumbWrapActive: {
-    // Extra horizontal space separates the selected thumb from its neighbors
-    marginHorizontal: THUMB_MARGIN_ACTIVE,
+    marginRight: THUMB_GAP,
+    overflow: "visible",
   },
   thumbImg: {
     width: THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: 3,
-    opacity: 0.72,
   },
 
-  // Comment bar
+  toolbar: {
+    position: "absolute",
+    bottom: 0, left: 0, right: 0,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.82)",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.1)",
+  },
+
   commentBar: {
     position: "absolute",
-    left: 0, right: 0,
+    bottom: 0, left: 0, right: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     backgroundColor: "rgba(0,0,0,0.92)",
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.12)",
   },
@@ -520,19 +496,6 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   sendBtnDisabled: { opacity: 0.3 },
-
-  // Toolbar
-  toolbar: {
-    position: "absolute",
-    bottom: 0, left: 0, right: 0,
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.82)",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.1)",
-  },
-  toolbarDimmed: { opacity: 0.3 },
 });
 
 const toolStyles = StyleSheet.create({

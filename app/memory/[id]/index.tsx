@@ -1,19 +1,15 @@
 import { useState } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
-  StyleSheet, ActivityIndicator, Image, Modal, Alert, Dimensions,
+  StyleSheet, ActivityIndicator, Image, Alert, Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system/legacy";
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import {
-  ArrowLeft, MoreHorizontal, Heart, MessageCircle, Share2,
-  Send, Trash2, Camera, Pencil, Mic,
+  ArrowLeft, Heart, MessageCircle, Share2, Send, Trash2, Pencil,
 } from "lucide-react-native";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { PhotoLightbox } from "@/components/ui/PhotoLightbox";
@@ -48,34 +44,16 @@ export default function MemoryDetailScreen() {
   const toggleHeart = useMutation(api.reactions.toggle);
   const addComment = useMutation(api.comments.add);
   const removeComment = useMutation(api.comments.remove);
-  const removeMemory = useMutation(api.memories.remove);
-  const generateUploadUrl = useMutation(api.users.generateUploadUrl);
-  const addPhotos = useMutation(api.memories.addPhotos);
 
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [showOptions, setShowOptions] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
-  // Audio
-  const player = useAudioPlayer(memory?.audioUrl ?? null);
-  const playerStatus = useAudioPlayerStatus(player);
-  const isPlaying = playerStatus.playing;
-  const audioLoading = playerStatus.isBuffering;
 
   const liked = reactionData?.liked ?? false;
   const likeCount = reactionData?.count ?? 0;
   const commentCount = comments?.length ?? 0;
-
-  // ── Audio ─────────────────────────────────────────────────────────────────
-
-  function togglePlayback() {
-    if (!memory?.audioUrl) return;
-    if (isPlaying) { player.pause(); } else { player.play(); }
-  }
 
   // ── Comment ───────────────────────────────────────────────────────────────
 
@@ -88,41 +66,6 @@ export default function MemoryDetailScreen() {
     } finally {
       setSending(false);
     }
-  }
-
-  // ── Photo upload ──────────────────────────────────────────────────────────
-
-  async function handleAddPhotos() {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") { Alert.alert("Permission needed", "Allow photo access to add photos."); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: true, quality: 0.85 });
-    if (result.canceled) return;
-    setUploading(true);
-    setShowOptions(false);
-    try {
-      const ids: Id<"_storage">[] = [];
-      for (const asset of result.assets) {
-        const mimeType = asset.mimeType ?? "image/jpeg";
-        const uploadUrl = await generateUploadUrl();
-        const uploadResult = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
-          httpMethod: "POST",
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          headers: { "Content-Type": mimeType },
-        });
-        const { storageId } = JSON.parse(uploadResult.body) as { storageId: Id<"_storage"> };
-        ids.push(storageId);
-      }
-      await addPhotos({ id: memoryId, photoStorageIds: ids });
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  // ── Delete ────────────────────────────────────────────────────────────────
-
-  async function handleDelete() {
-    await removeMemory({ id: memoryId });
-    router.replace("/(tabs)/home");
   }
 
   // ── Loading / error states ─────────────────────────────────────────────────
@@ -172,8 +115,8 @@ export default function MemoryDetailScreen() {
         <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()}>
           <ArrowLeft size={22} color={colors.ink} strokeWidth={2} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.iconBtn} onPress={() => setShowOptions(true)}>
-          <MoreHorizontal size={22} color={colors.ink} strokeWidth={2} />
+        <TouchableOpacity style={styles.iconBtn} onPress={() => router.push(`/memory/${id}/edit`)}>
+          <Pencil size={20} color={colors.ink} strokeWidth={2} />
         </TouchableOpacity>
       </View>
 
@@ -227,24 +170,10 @@ export default function MemoryDetailScreen() {
                 ))}
               </View>
             )}
-            <TouchableOpacity style={styles.addPhotoBtn} onPress={handleAddPhotos} disabled={uploading}>
-              {uploading
-                ? <ActivityIndicator color={colors.brown} size="small" />
-                : <Camera size={14} color={colors.brown + "99"} strokeWidth={1.8} />
-              }
-              <Text style={styles.addPhotoBtnText}>Add photo</Text>
-            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.photoPlaceholder}>
             <Text style={styles.photoPlaceholderEmoji}>📷</Text>
-            <TouchableOpacity style={styles.addPhotoBtn} onPress={handleAddPhotos} disabled={uploading}>
-              {uploading
-                ? <ActivityIndicator color={colors.brown} size="small" />
-                : <Camera size={14} color={colors.brown + "99"} strokeWidth={1.8} />
-              }
-              <Text style={styles.addPhotoBtnText}>Add photos</Text>
-            </TouchableOpacity>
           </View>
         )}
 
@@ -259,20 +188,6 @@ export default function MemoryDetailScreen() {
         {/* Location */}
         {!!memory.location && (
           <Text style={styles.location}>📍 {memory.location}</Text>
-        )}
-
-        {/* Voice memo */}
-        {!!memory.audioUrl && (
-          <View style={styles.audioRow}>
-            <TouchableOpacity style={styles.audioPlayBtn} onPress={togglePlayback} disabled={audioLoading}>
-              {audioLoading
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={styles.audioPlayIcon}>{isPlaying ? "⏸" : "▶"}</Text>
-              }
-            </TouchableOpacity>
-            <Mic size={16} color={colors.coral} strokeWidth={1.8} />
-            <Text style={styles.audioLabel}>{isPlaying ? "Playing…" : "Voice memo"}</Text>
-          </View>
         )}
 
         {/* Reaction row */}
@@ -321,6 +236,7 @@ export default function MemoryDetailScreen() {
                 avatarUrl={c.authorAvatarUrl ?? undefined}
                 body={c.body}
                 createdAt={c.createdAt}
+                photoThumbnailUrl={c.photoThumbnailUrl ?? undefined}
                 canDelete={c.authorId === currentUser?._id}
                 onDelete={() => removeComment({ id: c._id })}
               />
@@ -370,65 +286,12 @@ export default function MemoryDetailScreen() {
         onClose={() => setLightboxIndex(null)}
         favorited={liked}
         onFavorite={() => toggleHeart({ memoryId })}
-        onSendComment={async (text) => {
-          await addComment({ memoryId, body: text });
+        onSendComment={async (text, photoStorageId) => {
+          await addComment({ memoryId, body: text, ...(photoStorageId ? { photoStorageId: photoStorageId as Id<"_storage"> } : {}) });
         }}
         memoryTitle={memory?.title}
       />
 
-      {/* Options bottom sheet */}
-      <Modal
-        visible={showOptions}
-        transparent
-        animationType="slide"
-        onRequestClose={() => { setShowOptions(false); setConfirmDelete(false); }}
-      >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => { setShowOptions(false); setConfirmDelete(false); }}
-        />
-        <View style={styles.bottomSheet}>
-          <View style={styles.sheetHandle} />
-          {confirmDelete ? (
-            <View style={styles.deleteConfirm}>
-              <Text style={styles.deleteTitle}>Delete this memory?</Text>
-              <Text style={styles.deleteBody}>This can't be undone.</Text>
-              <TouchableOpacity style={styles.deleteConfirmBtn} onPress={handleDelete}>
-                <Text style={styles.deleteConfirmBtnText}>Yes, delete it</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setConfirmDelete(false)}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.sheetOptions}>
-              <OptionRow
-                icon={<Pencil size={20} color={colors.coral} strokeWidth={1.8} />}
-                label="Edit memory"
-                onPress={() => { setShowOptions(false); router.push(`/memory/${id}/edit`); }}
-              />
-              <OptionRow
-                icon={uploading
-                  ? <ActivityIndicator color={colors.brown} size="small" />
-                  : <Camera size={20} color={colors.coral} strokeWidth={1.8} />}
-                label="Upload photos"
-                onPress={handleAddPhotos}
-              />
-              <View style={styles.divider} />
-              <OptionRow
-                icon={<Trash2 size={20} color="#ef4444" strokeWidth={1.8} />}
-                label="Delete memory"
-                labelColor="#ef4444"
-                onPress={() => setConfirmDelete(true)}
-              />
-            </View>
-          )}
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -436,13 +299,14 @@ export default function MemoryDetailScreen() {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function CommentRow({
-  authorName, avatarPreset, avatarUrl, body, createdAt, canDelete, onDelete,
+  authorName, avatarPreset, avatarUrl, body, createdAt, photoThumbnailUrl, canDelete, onDelete,
 }: {
   authorName: string;
   avatarPreset?: string;
   avatarUrl?: string;
   body: string;
   createdAt: number;
+  photoThumbnailUrl?: string;
   canDelete: boolean;
   onDelete: () => void;
 }) {
@@ -450,6 +314,13 @@ function CommentRow({
     <View style={commentStyles.row}>
       <UserAvatar name={authorName} avatarPreset={avatarPreset} avatarUrl={avatarUrl} size={32} />
       <View style={commentStyles.bubble}>
+        {photoThumbnailUrl && (
+          <Image
+            source={{ uri: photoThumbnailUrl }}
+            style={commentStyles.photoThumb}
+            resizeMode="cover"
+          />
+        )}
         <View style={commentStyles.bubbleHeader}>
           <Text style={commentStyles.author}>{authorName}</Text>
           <Text style={commentStyles.time}>{relativeTime(createdAt)}</Text>
@@ -465,19 +336,6 @@ function CommentRow({
   );
 }
 
-function OptionRow({ icon, label, labelColor = colors.ink, onPress }: {
-  icon: React.ReactNode;
-  label: string;
-  labelColor?: string;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity style={optionStyles.row} onPress={onPress} activeOpacity={0.8}>
-      {icon}
-      <Text style={[optionStyles.label, { color: labelColor }]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
 
 function SkeletonBlock({ width, height, style }: { width: number | string; height: number; style?: object }) {
   return <View style={[{ width: width as any, height, backgroundColor: colors.border, borderRadius: 8 }, style]} />;
@@ -502,17 +360,10 @@ const styles = StyleSheet.create({
 
   // Photos
   photoSection: { marginBottom: 24 },
-  photoImg: { height: 280, borderRadius: 20 },
+  photoImg: { height: PHOTO_SIZE, borderRadius: 20 },
   dotRow: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 12 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.brown + "40" },
   dotActive: { width: 18, backgroundColor: colors.coral },
-  addPhotoBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "center",
-    marginTop: 10, borderWidth: 1, borderColor: colors.border, borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 6, backgroundColor: "#fff",
-  },
-  addPhotoBtnText: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.brown + "99" },
-
   // Placeholder
   photoPlaceholder: {
     height: 200, borderRadius: 20, backgroundColor: colors.paper,
@@ -525,18 +376,6 @@ const styles = StyleSheet.create({
   body: { fontFamily: "PatrickHand", fontSize: 16, color: colors.ink + "E6", lineHeight: 24, marginBottom: 10 },
   location: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "B3", marginBottom: 12 },
 
-  // Audio
-  audioRow: {
-    flexDirection: "row", alignItems: "center", gap: 10,
-    backgroundColor: "#fff", borderRadius: 20, borderWidth: 1,
-    borderColor: colors.border, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 8,
-  },
-  audioPlayBtn: {
-    width: 36, height: 36, borderRadius: 18, backgroundColor: colors.coral,
-    alignItems: "center", justifyContent: "center",
-  },
-  audioPlayIcon: { fontSize: 14, color: "#fff" },
-  audioLabel: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown },
 
   // Reactions
   reactionRow: {
@@ -562,33 +401,6 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: { opacity: 0.4 },
 
-  // Modal
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
-  bottomSheet: {
-    backgroundColor: colors.cream, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    paddingTop: 12, paddingHorizontal: 20, paddingBottom: 40,
-    shadowColor: "#6C5A4E", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.12, shadowRadius: 20,
-    elevation: 20,
-  },
-  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 20 },
-  sheetOptions: { gap: 8 },
-  divider: { height: 1, backgroundColor: colors.border, marginVertical: 4 },
-
-  // Delete confirm
-  deleteConfirm: { alignItems: "center", gap: 12, paddingTop: 8 },
-  deleteTitle: { fontFamily: "PatrickHand", fontSize: 17, fontWeight: "600", color: colors.ink },
-  deleteBody: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown + "99" },
-  deleteConfirmBtn: {
-    width: "100%", backgroundColor: "#ef4444", borderRadius: 16,
-    paddingVertical: 14, alignItems: "center",
-  },
-  deleteConfirmBtnText: { fontFamily: "PatrickHand", fontSize: 15, fontWeight: "600", color: "#fff" },
-  cancelBtn: {
-    width: "100%", borderWidth: 1, borderColor: colors.border,
-    borderRadius: 16, paddingVertical: 14, alignItems: "center", backgroundColor: "#fff",
-  },
-  cancelBtnText: { fontFamily: "PatrickHand", fontSize: 15, fontWeight: "600", color: colors.ink },
-
   // Not found
   notFound: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 32 },
   notFoundTitle: { fontFamily: "Caveat-Bold", fontSize: 28, color: colors.coral },
@@ -599,20 +411,19 @@ const commentStyles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   bubble: {
     flex: 1, backgroundColor: "rgba(255,255,255,0.8)", borderRadius: 16,
-    borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: colors.border, overflow: "hidden",
   },
-  bubbleHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 },
+  photoThumb: {
+    width: "100%", height: 140,
+    marginBottom: 0,
+  },
+  bubbleHeader: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    marginBottom: 2, paddingHorizontal: 12, paddingTop: 8,
+  },
   author: { fontFamily: "PatrickHand", fontSize: 12, fontWeight: "600", color: colors.brown },
   time: { fontFamily: "PatrickHand", fontSize: 11, color: colors.brown + "80" },
-  body: { fontFamily: "PatrickHand", fontSize: 14, color: colors.ink, lineHeight: 18 },
+  body: { fontFamily: "PatrickHand", fontSize: 14, color: colors.ink, lineHeight: 18, paddingHorizontal: 12, paddingBottom: 8 },
   deleteBtn: { marginTop: 8 },
 });
 
-const optionStyles = StyleSheet.create({
-  row: {
-    flexDirection: "row", alignItems: "center", gap: 14,
-    backgroundColor: "#fff", borderRadius: 16, borderWidth: 1,
-    borderColor: colors.border, paddingHorizontal: 16, paddingVertical: 14,
-  },
-  label: { fontFamily: "PatrickHand", fontSize: 16, fontWeight: "600" },
-});
