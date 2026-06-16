@@ -7,7 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Bell, ChevronDown, ChevronRight, Heart, ListChecks } from "lucide-react-native";
 import { useQuery, useMutation } from "convex/react";
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { api } from "@/convex/_generated/api";
 import { useSpace } from "@/lib/useSpace";
 import { Card } from "@/components/ui/Card";
@@ -16,23 +16,20 @@ import { InvitePartnerCard } from "@/components/ui/InvitePartnerCard";
 import { colors } from "@/theme/colors";
 
 const { width: SCREEN_W } = Dimensions.get("window");
-const CARD_W = SCREEN_W - 40; // full width minus page padding
+const CARD_W = SCREEN_W - 40;
+
+const QUOTE = 'What is the very first thing you noticed about me?';
 
 export default function HomeScreen() {
   const router = useRouter();
   const { status, space, members, invite } = useSpace();
   const memories = useQuery(api.memories.list) ?? [];
   const allTodos = useQuery(api.todos.list);
-  const triad = useQuery(api.dailyQuestions.todayTriad);
-  const ensureTriad = useMutation(api.dailyQuestions.ensureTriad);
 
   const upcomingTodos = (allTodos ?? []).filter((t) => !t.done).slice(0, 2);
-  const featuredQuestion = triad?.[0] ?? null;
   const isSolo = status === "solo";
   const recentMemories = memories.slice(0, 5);
   const [memoryIndex, setMemoryIndex] = useState(0);
-
-  useEffect(() => { ensureTriad(); }, [ensureTriad]);
 
   return (
     <SafeAreaView style={styles.root}>
@@ -98,28 +95,6 @@ export default function HomeScreen() {
 
         {/* Invite card — solo only */}
         {isSolo && invite && <InvitePartnerCard code={invite.code} />}
-
-        {/* Daily question */}
-        <TouchableOpacity
-          style={isSolo ? styles.cardMtSmall : styles.cardMt}
-          onPress={() => router.push("/daily-question")}
-          activeOpacity={0.9}
-        >
-          <Card tint="blue" style={styles.questionCard}>
-            <Text style={styles.cardLabel}>Daily question</Text>
-            <Text style={styles.questionText}>
-              {featuredQuestion?.prompt ?? "How was your day?"}{" "}
-              <Text style={{ color: colors.coral }}>{featuredQuestion?.emoji ?? "💬"}</Text>
-            </Text>
-            <View style={styles.questionFooter}>
-              <View style={styles.answerPill}>
-                <Text style={styles.answerPillText}>
-                  {featuredQuestion?.myAnswer ? "See answers" : "Answer"}
-                </Text>
-              </View>
-            </View>
-          </Card>
-        </TouchableOpacity>
 
         {/* Todo card */}
         <TouchableOpacity
@@ -237,6 +212,19 @@ export default function HomeScreen() {
             </>
           )}
         </View>
+
+        {/* Quote of the Day */}
+        <View style={[styles.cardMt, styles.quoteCardShadow]}>
+          <ImageBackground
+            source={require("../../assets/daily-notes-card-bg.png")}
+            style={styles.quoteCard}
+            imageStyle={styles.quoteCardImg}
+          >
+            <Text style={styles.quoteDailyLabel}>Question of the Day</Text>
+            <Text style={styles.quoteText}>{QUOTE}</Text>
+          </ImageBackground>
+        </View>
+
       </ScrollView>
     </SafeAreaView>
   );
@@ -303,17 +291,18 @@ const styles = StyleSheet.create({
   cardMt: { marginTop: 20 },
   cardMtSmall: { marginTop: 12 },
 
-  // Question card
-  questionCard: { padding: 16 },
-  cardLabel: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.brown + "CC", marginBottom: 4 },
-  questionText: { fontFamily: "PatrickHand", fontSize: 20, color: colors.ink, lineHeight: 26 },
-  questionFooter: { marginTop: 12, alignItems: "flex-end" },
-  answerPill: {
-    backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border,
-    borderRadius: 20, paddingHorizontal: 20, paddingVertical: 6,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2,
+  // Quote of the Day card
+  quoteCardShadow: {
+    borderRadius: 20,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.20, shadowRadius: 12, elevation: 8,
   },
-  answerPillText: { fontFamily: "PatrickHand", fontSize: 14, fontWeight: "600", color: colors.ink },
+  quoteCard: { borderRadius: 20, overflow: "hidden", padding: 20, paddingVertical: 24, minHeight: 140 },
+  quoteCardImg: { borderRadius: 20, opacity: 0.75 },
+  quoteDailyLabel: { fontFamily: "PatrickHand", fontSize: 13, color: "rgba(255,255,255,0.75)", marginBottom: 10 },
+  quoteText: { fontFamily: "PatrickHand", fontSize: 20, color: "#fff", lineHeight: 28 },
+
+  // Todo card label (shared)
+  cardLabel: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.brown + "CC", marginBottom: 4 },
 
   // Todo card
   todoCard: { padding: 16 },
