@@ -1,6 +1,6 @@
 import { Tabs, useRouter } from "expo-router";
 import { TouchableOpacity, View, StyleSheet, Platform } from "react-native";
-import { Home, BookOpen, CalendarDays, User } from "lucide-react-native";
+import { Home, BookOpen, Images, User } from "lucide-react-native";
 import { colors } from "@/theme/colors";
 
 function FABButton() {
@@ -58,11 +58,15 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="calendar"
+        name="album"
         options={{
-          title: "Calendar",
-          tabBarIcon: ({ color, size }) => <CalendarDays size={size} color={color} strokeWidth={1.8} />,
+          title: "Album",
+          tabBarIcon: ({ color, size }) => <Images size={size} color={color} strokeWidth={1.8} />,
         }}
+      />
+      <Tabs.Screen
+        name="calendar"
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="profile"

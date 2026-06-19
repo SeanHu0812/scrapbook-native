@@ -108,6 +108,12 @@ export default defineSchema({
       v.literal("home"),
     ),
     done: v.boolean(),
+    sortOrder: v.optional(v.number()),
+    status: v.optional(v.union(
+      v.literal("done"),
+      v.literal("planned"),
+      v.literal("planning"),
+    )),
     createdBy: v.id("users"),
     createdAt: v.number(),
   })

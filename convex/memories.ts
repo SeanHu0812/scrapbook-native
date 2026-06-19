@@ -102,6 +102,54 @@ export const get = query({
   },
 });
 
+export const listAllPhotos = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const membership = await ctx.db
+      .query("memberships")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!membership) return [];
+
+    const memories = await ctx.db
+      .query("memories")
+      .withIndex("by_space_date", (q) => q.eq("spaceId", membership.spaceId))
+      .order("desc")
+      .take(200);
+
+    const result: {
+      url: string;
+      storageId: Id<"_storage">;
+      memoryId: Id<"memories">;
+      memoryTitle: string;
+      date: string;
+    }[] = [];
+
+    for (const memory of memories) {
+      const assets = await ctx.db
+        .query("mediaAssets")
+        .withIndex("by_memory", (q) => q.eq("memoryId", memory._id))
+        .collect();
+      for (const asset of assets.filter((a) => a.kind === "photo")) {
+        const url = await ctx.storage.getUrl(asset.storageId);
+        if (url) {
+          result.push({
+            url,
+            storageId: asset.storageId,
+            memoryId: memory._id,
+            memoryTitle: memory.title,
+            date: memory.date,
+          });
+        }
+      }
+    }
+
+    return result;
+  },
+});
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
 export const create = mutation({

@@ -96,6 +96,50 @@ export const update = mutation({
   },
 });
 
+export const reorder = mutation({
+  args: { orderedIds: v.array(v.id("todos")) },
+  handler: async (ctx, { orderedIds }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const membership = await ctx.db
+      .query("memberships")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!membership) throw new Error("No space found");
+    for (let i = 0; i < orderedIds.length; i++) {
+      const todo = await ctx.db.get(orderedIds[i]);
+      if (!todo || todo.spaceId !== membership.spaceId) continue;
+      await ctx.db.patch(orderedIds[i], { sortOrder: i });
+    }
+  },
+});
+
+export const setStatus = mutation({
+  args: {
+    id: v.id("todos"),
+    status: v.optional(v.union(
+      v.literal("done"),
+      v.literal("planned"),
+      v.literal("planning"),
+    )),
+  },
+  handler: async (ctx, { id, status }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const todo = await ctx.db.get(id);
+    if (!todo) throw new Error("Not found");
+    const membership = await ctx.db
+      .query("memberships")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (!membership || membership.spaceId !== todo.spaceId) throw new Error("Forbidden");
+    await ctx.db.patch(id, {
+      status,
+      done: status === "done",
+    });
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("todos") },
   handler: async (ctx, { id }) => {

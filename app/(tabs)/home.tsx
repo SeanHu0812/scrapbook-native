@@ -1,22 +1,25 @@
 import {
   View, Text, ScrollView, TouchableOpacity, Image, FlatList,
-  StyleSheet, Dimensions, ImageBackground,
+  StyleSheet, Dimensions, ImageBackground, Modal,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Bell, ChevronDown, ChevronRight, Heart, ListChecks } from "lucide-react-native";
+import { Bell, ChevronRight, Flag, Heart, BookOpen, CheckSquare } from "lucide-react-native";
 import { useQuery, useMutation } from "convex/react";
 import { useState } from "react";
 import { api } from "@/convex/_generated/api";
 import { useSpace } from "@/lib/useSpace";
-import { Card } from "@/components/ui/Card";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { InvitePartnerCard } from "@/components/ui/InvitePartnerCard";
 import { colors } from "@/theme/colors";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const CARD_W = SCREEN_W - 40;
+
+const CATEGORY_DOODLE: Record<string, ReturnType<typeof require>> = {
+  default: require("../../assets/beach-doodle.png"),
+};
 
 const QUOTE = 'What is the very first thing you noticed about me?';
 
@@ -26,10 +29,45 @@ export default function HomeScreen() {
   const memories = useQuery(api.memories.list) ?? [];
   const allTodos = useQuery(api.todos.list);
 
-  const upcomingTodos = (allTodos ?? []).filter((t) => !t.done).slice(0, 2);
+  const sortedTodos = [...(allTodos ?? [])].sort((a, b) => {
+    const aDone = a.status === "done";
+    const bDone = b.status === "done";
+    if (aDone !== bDone) return aDone ? 1 : -1;
+    const aOrder = (a as any).sortOrder ?? a.createdAt ?? 0;
+    const bOrder = (b as any).sortOrder ?? b.createdAt ?? 0;
+    return aOrder - bOrder;
+  });
+  const firstTodo = sortedTodos[0];
   const isSolo = status === "solo";
   const recentMemories = memories.slice(0, 5);
   const [memoryIndex, setMemoryIndex] = useState(0);
+  const [notifVisible, setNotifVisible] = useState(false);
+
+  // Build activity feed from memories + todos
+  const memberMap = Object.fromEntries(members.map((m) => [m.userId, m]));
+  type Activity = { id: string; type: "memory" | "todo"; title: string; actorId: string; ts: number };
+  const activities: Activity[] = [
+    ...(memories ?? []).map((m) => ({
+      id: m._id,
+      type: "memory" as const,
+      title: m.title,
+      actorId: (m as any).authorId ?? "",
+      ts: new Date((m as any).date ?? 0).getTime(),
+    })),
+    ...(allTodos ?? []).map((t) => ({
+      id: t._id,
+      type: "todo" as const,
+      title: t.title,
+      actorId: (t as any).createdBy ?? "",
+      ts: (t as any).createdAt ?? 0,
+    })),
+  ].sort((a, b) => b.ts - a.ts).slice(0, 30);
+
+  const headerTitle = members.length >= 2
+    ? `${members[0].name.split(" ")[0]} & ${members[1].name.split(" ")[0]}'s Story`
+    : members.length === 1
+      ? `${members[0].name.split(" ")[0]}'s Story`
+      : "Our Story";
 
   return (
     <SafeAreaView style={styles.root}>
@@ -40,93 +78,56 @@ export default function HomeScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.headerTitle}>
-            <Text style={styles.spaceName}>{space?.name ?? "our little space"}</Text>
-            <ChevronDown size={16} color={colors.brown} strokeWidth={1.8} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.bellBtn}>
+          <Text style={styles.headerTitle}>{headerTitle}</Text>
+          <TouchableOpacity style={styles.bellBtn} onPress={() => setNotifVisible(true)}>
             <Bell size={20} color={colors.ink} strokeWidth={1.8} />
-            <View style={styles.bellDot} />
+            {activities.length > 0 && <View style={styles.bellDot} />}
           </TouchableOpacity>
         </View>
 
-        {/* Avatars */}
-        <View style={styles.avatarRow}>
-          {members.length > 0 ? (
-            <>
-              <View style={styles.avatarGroup}>
+        {/* Hero */}
+        <View style={styles.hero}>
+          <View style={styles.heroAvatarRow}>
+            <View style={styles.heroAvatarWrap}>
+              {members[0] ? (
                 <UserAvatar
                   name={members[0].name}
                   avatarPreset={members[0].avatarPreset}
                   avatarUrl={members[0].avatarUrl}
-                  size={64}
+                  size={100}
                 />
-                <Text style={styles.memberName}>{members[0].name}</Text>
-              </View>
+              ) : (
+                <View style={[styles.heroAvatarPlaceholder]} />
+              )}
+            </View>
 
-              <Text style={styles.heartIcon}>♥</Text>
+            <View style={styles.heroHeartWrap}>
+              <Heart size={18} color={colors.coral} fill={colors.coral} strokeWidth={0} />
+            </View>
 
+            <View style={styles.heroAvatarWrap}>
               {members.length > 1 ? (
-                <View style={styles.avatarGroup}>
-                  <UserAvatar
-                    name={members[1].name}
-                    avatarPreset={members[1].avatarPreset}
-                    avatarUrl={members[1].avatarUrl}
-                    size={64}
-                  />
-                  <Text style={styles.memberName}>{members[1].name}</Text>
-                </View>
+                <UserAvatar
+                  name={members[1].name}
+                  avatarPreset={members[1].avatarPreset}
+                  avatarUrl={members[1].avatarUrl}
+                  size={100}
+                />
               ) : (
                 <TouchableOpacity
-                  style={styles.avatarGroup}
+                  style={styles.heroAvatarPlaceholder}
                   onPress={() => router.push("/onboarding/invite")}
                 >
-                  <View style={styles.addPartnerCircle}>
-                    <Text style={styles.addPartnerPlus}>+</Text>
-                  </View>
-                  <Text style={styles.addPartnerLabel}>add partner</Text>
+                  <Text style={styles.heroAvatarPlus}>+</Text>
                 </TouchableOpacity>
               )}
-            </>
-          ) : (
-            <View style={styles.skeletonAvatar} />
-          )}
+            </View>
+          </View>
+
         </View>
 
         {/* Invite card — solo only */}
         {isSolo && invite && <InvitePartnerCard code={invite.code} />}
-
-        {/* Todo card */}
-        <TouchableOpacity
-          style={styles.cardMtSmall}
-          onPress={() => router.push("/todos")}
-          activeOpacity={0.9}
-        >
-          <Card tint="green" style={styles.todoCard}>
-            <View style={styles.todoHeader}>
-              <View>
-                <Text style={styles.cardLabel}>{isSolo ? "My little list" : "Our little list"}</Text>
-                <Text style={styles.todoCount}>{upcomingTodos.length} things to do</Text>
-              </View>
-              <View style={styles.todoIcon}>
-                <ListChecks size={20} color={colors.coral} strokeWidth={1.8} />
-              </View>
-            </View>
-
-            {upcomingTodos.map((t) => (
-              <View key={t._id} style={styles.todoRow}>
-                <View style={styles.todoCheck} />
-                <Text style={styles.todoTitle} numberOfLines={1}>{t.title}</Text>
-                {t.due ? <Text style={styles.todoDue}>{t.due}</Text> : null}
-              </View>
-            ))}
-
-            <View style={styles.openListRow}>
-              <Text style={styles.openListText}>Open list</Text>
-              <ChevronRight size={14} color={colors.coral} strokeWidth={2} />
-            </View>
-          </Card>
-        </TouchableOpacity>
 
         {/* Recent Memories */}
         <View style={styles.recentSection}>
@@ -213,6 +214,57 @@ export default function HomeScreen() {
           )}
         </View>
 
+        {/* Next Adventure */}
+        <View style={styles.cardMtSmall}>
+          <View style={styles.adventureHeader}>
+            <View style={styles.adventureHeaderLeft}>
+              <Flag size={16} color={colors.coral} strokeWidth={1.8} />
+              <Text style={styles.adventureSectionTitle}>Next Adventure</Text>
+            </View>
+            <TouchableOpacity onPress={() => router.push("/todos")} style={styles.viewAllBtn}>
+              <Text style={styles.viewAllText}>View all</Text>
+              <ChevronRight size={14} color={colors.coral} strokeWidth={1.8} />
+            </TouchableOpacity>
+          </View>
+
+          {firstTodo ? (
+            <TouchableOpacity
+              style={styles.adventureCard}
+              onPress={() => router.push("/todos")}
+              activeOpacity={0.9}
+            >
+              <View style={styles.adventureContent}>
+                <Text style={styles.adventureItemTitle} numberOfLines={2}>{firstTodo.title}</Text>
+                {!!firstTodo.due && (
+                  <Text style={styles.adventureSubtitle}>{firstTodo.due}</Text>
+                )}
+                {firstTodo.status && (
+                  <View style={[styles.adventureBadge, firstTodo.status === "planned" && styles.adventureBadgePlanned, firstTodo.status === "done" && styles.adventureBadgeDone]}>
+                    <Text style={[styles.adventureBadgeText, firstTodo.status === "planned" && styles.adventureBadgePlannedText, firstTodo.status === "done" && styles.adventureBadgeDoneText]}>
+                      {firstTodo.status.charAt(0).toUpperCase() + firstTodo.status.slice(1)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <Image
+                source={CATEGORY_DOODLE[(firstTodo as any).category] ?? CATEGORY_DOODLE.default}
+                style={styles.adventureDoodle}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.adventureEmpty}
+              onPress={() => router.push("/todos")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.adventureEmptyText}>No adventures planned yet</Text>
+              <Text style={styles.adventureEmptySubtext}>Tap to add your first one ✈️</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         {/* Quote of the Day */}
         <View style={[styles.cardMt, styles.quoteCardShadow]}>
           <ImageBackground
@@ -226,6 +278,48 @@ export default function HomeScreen() {
         </View>
 
       </ScrollView>
+
+      {/* Notification sheet */}
+      <Modal visible={notifVisible} transparent animationType="slide" onRequestClose={() => setNotifVisible(false)}>
+        <TouchableOpacity style={styles.notifOverlay} activeOpacity={1} onPress={() => setNotifVisible(false)} />
+        <SafeAreaView style={styles.notifSheet} edges={["bottom"]}>
+          <View style={styles.notifHandle} />
+          <Text style={styles.notifTitle}>Recent Activity</Text>
+          <FlatList
+            data={activities}
+            keyExtractor={(a) => a.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.notifList}
+            ItemSeparatorComponent={() => <View style={styles.notifSep} />}
+            ListEmptyComponent={
+              <View style={styles.notifEmpty}>
+                <Text style={styles.notifEmptyText}>No activity yet</Text>
+              </View>
+            }
+            renderItem={({ item }) => {
+              const actor = memberMap[item.actorId];
+              return (
+                <View style={styles.notifItem}>
+                  <View style={styles.notifIconWrap}>
+                    {item.type === "memory"
+                      ? <BookOpen size={16} color={colors.coral} strokeWidth={1.8} />
+                      : <CheckSquare size={16} color="#4CAF7D" strokeWidth={1.8} />
+                    }
+                  </View>
+                  <View style={styles.notifItemText}>
+                    <Text style={styles.notifItemTitle} numberOfLines={1}>
+                      <Text style={styles.notifActor}>{actor?.name.split(" ")[0] ?? "Someone"} </Text>
+                      {item.type === "memory" ? "added a memory" : "added to the list"}
+                    </Text>
+                    <Text style={styles.notifItemSub} numberOfLines={1}>{item.title}</Text>
+                  </View>
+                  <Text style={styles.notifTime}>{relativeTime(item.ts)}</Text>
+                </View>
+              );
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -251,6 +345,36 @@ function MemoryHeartBtn({ memoryId }: { memoryId: string }) {
   );
 }
 
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return `${Math.floor(days / 7)}w ago`;
+}
+
+function getRelationshipDuration(startDate: string): string {
+  const start = new Date(startDate);
+  const now = new Date();
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  if (months < 0) { years--; months += 12; }
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} year${years !== 1 ? "s" : ""}`);
+  if (months > 0) parts.push(`${months} month${months !== 1 ? "s" : ""}`);
+  return parts.length > 0 ? parts.join(", ") : "just started";
+}
+
+function formatStartDate(dateStr: string): string {
+  const [year, m, d] = dateStr.split("-").map(Number);
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return `${MONTHS[m - 1]} ${d}, ${year}`;
+}
+
 function formatDate(iso: string) {
   const [year, m, d] = iso.split("-").map(Number);
   const months = [
@@ -263,28 +387,77 @@ function formatDate(iso: string) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.cream },
   scroll: { flex: 1 },
-  content: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 100 },
+  content: { paddingHorizontal: 20, paddingTop: 0, paddingBottom: 100 },
 
   // Header
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: 8, marginBottom: 4 },
-  headerTitle: { flexDirection: "row", alignItems: "center", gap: 4 },
-  spaceName: { fontFamily: "PatrickHand", fontSize: 20, fontWeight: "600", color: colors.ink },
+  header: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 4, paddingTop: 12, paddingBottom: 4,
+  },
+  headerTitle: { fontFamily: "Caveat-Bold", fontSize: 22, color: colors.ink, flex: 1 },
   bellBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  bellDot: { position: "absolute", top: 10, right: 10, width: 6, height: 6, borderRadius: 3, backgroundColor: colors.coral },
+  bellDot: {
+    position: "absolute", top: 8, right: 8,
+    width: 7, height: 7, borderRadius: 4,
+    backgroundColor: colors.coral, borderWidth: 1.5, borderColor: colors.cream,
+  },
 
-  // Avatars
-  avatarRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 12, marginBottom: 4 },
-  avatarGroup: { alignItems: "center", gap: 6 },
-  memberName: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown },
-  heartIcon: { fontSize: 20, color: colors.coral, marginBottom: 20 },
-  addPartnerCircle: {
-    width: 64, height: 64, borderRadius: 32,
-    borderWidth: 2, borderColor: colors.brown + "4D", borderStyle: "dashed",
+  // Notification sheet
+  notifOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
+  notifSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    paddingHorizontal: 20, paddingTop: 12, maxHeight: "70%",
+  },
+  notifHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: colors.border, alignSelf: "center", marginBottom: 16,
+  },
+  notifTitle: { fontFamily: "Caveat-Bold", fontSize: 24, color: colors.ink, marginBottom: 12 },
+  notifList: { paddingBottom: 24 },
+  notifSep: { height: 1, backgroundColor: colors.border, marginVertical: 2 },
+  notifItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12 },
+  notifIconWrap: {
+    width: 34, height: 34, borderRadius: 10,
+    backgroundColor: colors.paper,
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
+  },
+  notifItemText: { flex: 1 },
+  notifItemTitle: { fontFamily: "PatrickHand", fontSize: 14, color: colors.ink },
+  notifActor: { fontWeight: "700", color: colors.brown },
+  notifItemSub: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "99", marginTop: 1 },
+  notifTime: { fontFamily: "PatrickHand", fontSize: 12, color: colors.brown + "66", flexShrink: 0 },
+  notifEmpty: { paddingVertical: 40, alignItems: "center" },
+  notifEmptyText: { fontFamily: "PatrickHand", fontSize: 15, color: colors.brown + "80" },
+
+  // Hero
+  hero: { alignItems: "center", paddingTop: 16, paddingBottom: 8 },
+  heroAvatarRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 0 },
+  heroAvatarWrap: {
+    width: 110, height: 110, borderRadius: 55,
+    overflow: "hidden",
+    borderWidth: 3, borderColor: "#fff",
+    shadowColor: "#000", shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.10, shadowRadius: 10, elevation: 4,
+  },
+  heroAvatarPlaceholder: {
+    width: 104, height: 104, borderRadius: 52,
+    backgroundColor: colors.paper,
+    borderWidth: 2, borderColor: colors.border, borderStyle: "dashed",
     alignItems: "center", justifyContent: "center",
   },
-  addPartnerPlus: { fontSize: 26, color: colors.brown + "66", lineHeight: 30 },
-  addPartnerLabel: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "66" },
-  skeletonAvatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.border },
+  heroAvatarPlus: { fontSize: 32, color: colors.brown + "66" },
+  heroHeartWrap: {
+    zIndex: 1, marginHorizontal: -6,
+    backgroundColor: "#fff", borderRadius: 14,
+    padding: 5,
+    shadowColor: colors.coral, shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.20, shadowRadius: 4, elevation: 3,
+  },
+  heroDuration: { alignItems: "center", marginTop: 20, gap: 4 },
+  heroDurationLabel: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown + "99" },
+  heroDurationValue: { fontFamily: "Caveat-Bold", fontSize: 32, color: colors.ink, lineHeight: 36 },
+  heroDurationSince: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown + "99" },
 
 
   // Card spacing
@@ -301,20 +474,42 @@ const styles = StyleSheet.create({
   quoteDailyLabel: { fontFamily: "PatrickHand", fontSize: 13, color: "rgba(255,255,255,0.75)", marginBottom: 10 },
   quoteText: { fontFamily: "PatrickHand", fontSize: 20, color: "#fff", lineHeight: 28 },
 
-  // Todo card label (shared)
-  cardLabel: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.brown + "CC", marginBottom: 4 },
 
-  // Todo card
-  todoCard: { padding: 16 },
-  todoHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  todoCount: { fontFamily: "PatrickHand", fontSize: 18, color: colors.ink, marginTop: 2 },
-  todoIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
-  todoRow: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(255,255,255,0.7)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 6 },
-  todoCheck: { width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: colors.brown + "80" },
-  todoTitle: { flex: 1, fontFamily: "PatrickHand", fontSize: 14, color: colors.ink },
-  todoDue: { fontFamily: "PatrickHand", fontSize: 12, color: colors.brown + "B3" },
-  openListRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 2, marginTop: 4 },
-  openListText: { fontFamily: "PatrickHand", fontSize: 13, fontWeight: "600", color: colors.coral },
+  // Next Adventure
+  adventureHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  adventureHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  adventureSectionTitle: { fontFamily: "PatrickHand", fontSize: 18, fontWeight: "600", color: colors.ink },
+  viewAllBtn: { flexDirection: "row", alignItems: "center", gap: 2 },
+  viewAllText: { fontFamily: "PatrickHand", fontSize: 14, fontWeight: "600", color: colors.coral },
+
+  adventureCard: {
+    flexDirection: "row", alignItems: "center", gap: 14,
+    backgroundColor: colors.cream, borderRadius: 20, padding: 14,
+    borderWidth: 1, borderColor: colors.border,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.15, shadowRadius: 2, elevation: 8,
+  },
+  adventureContent: { flex: 1, gap: 4 },
+  adventureItemTitle: { fontFamily: "PatrickHand", fontSize: 18, fontWeight: "600", color: colors.ink, lineHeight: 24 },
+  adventureSubtitle: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "B3" },
+  adventureBadge: {
+    alignSelf: "flex-start", backgroundColor: "#EDE9F8",
+    borderRadius: 100, paddingHorizontal: 10, paddingVertical: 3, marginTop: 4,
+  },
+  adventureBadgePlanned: { backgroundColor: "#CFE8C9" },
+  adventureBadgeDone: { backgroundColor: colors.coral + "22" },
+  adventureBadgeText: { fontFamily: "PatrickHand", fontSize: 12, color: "#7C6CA8" },
+  adventureBadgePlannedText: { color: "#3A7D58" },
+  adventureBadgeDoneText: { color: colors.coral },
+  adventureDoodle: { width: 72, height: 72, flexShrink: 0, opacity: 0.9 },
+
+  adventureEmpty: {
+    backgroundColor: colors.cream, borderRadius: 20, padding: 20,
+    alignItems: "center", gap: 4,
+    borderWidth: 1.5, borderColor: colors.border, borderStyle: "dashed",
+  },
+  adventureEmptyText: { fontFamily: "PatrickHand", fontSize: 16, color: colors.ink },
+  adventureEmptySubtext: { fontFamily: "PatrickHand", fontSize: 13, color: colors.brown + "99" },
 
   // Recent memories
   recentSection: { marginTop: 24 },
