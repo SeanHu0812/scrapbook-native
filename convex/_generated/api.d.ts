@@ -22,6 +22,7 @@ import type * as memories from "../memories.js";
 import type * as notes from "../notes.js";
 import type * as questionPool from "../questionPool.js";
 import type * as r2 from "../r2.js";
+import type * as r2Helpers from "../r2Helpers.js";
 import type * as reactions from "../reactions.js";
 import type * as seed from "../seed.js";
 import type * as seedMutation from "../seedMutation.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   notes: typeof notes;
   questionPool: typeof questionPool;
   r2: typeof r2;
+  r2Helpers: typeof r2Helpers;
   reactions: typeof reactions;
   seed: typeof seed;
   seedMutation: typeof seedMutation;
