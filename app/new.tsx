@@ -5,9 +5,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useMutation } from "convex/react";
+import { useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import DateTimePicker from "@react-native-community/datetimepicker";
@@ -27,12 +26,12 @@ function formatDisplayDate(iso: string) {
   return `${months[m - 1]} ${d}, ${y}`;
 }
 
-type UploadedPhoto = { storageId: Id<"_storage">; previewUrl: string };
+type UploadedPhoto = { r2Url: string; previewUrl: string };
 
 export default function NewMemoryScreen() {
   const router = useRouter();
   const createMemory = useMutation(api.memories.create);
-  const generateUploadUrl = useMutation(api.users.generateUploadUrl);
+  const generateR2UploadUrl = useAction(api.r2.generateUploadUrl);
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -64,14 +63,13 @@ export default function NewMemoryScreen() {
     try {
       for (const asset of result.assets) {
         const mimeType = asset.mimeType ?? "image/jpeg";
-        const uploadUrl = await generateUploadUrl();
-        const uploadResult = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
-          httpMethod: "POST",
+        const { uploadUrl, r2Url } = await generateR2UploadUrl({ mimeType });
+        await FileSystem.uploadAsync(uploadUrl, asset.uri, {
+          httpMethod: "PUT",
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
           headers: { "Content-Type": mimeType },
         });
-        const { storageId } = JSON.parse(uploadResult.body) as { storageId: Id<"_storage"> };
-        setPhotos((cur) => [...cur, { storageId, previewUrl: asset.uri }]);
+        setPhotos((cur) => [...cur, { r2Url, previewUrl: asset.uri }]);
       }
     } catch {
       setError("Photo upload failed. Try again.");
@@ -80,8 +78,8 @@ export default function NewMemoryScreen() {
     }
   }
 
-  function removePhoto(storageId: Id<"_storage">) {
-    setPhotos((cur) => cur.filter((p) => p.storageId !== storageId));
+  function removePhoto(r2Url: string) {
+    setPhotos((cur) => cur.filter((p) => p.r2Url !== r2Url));
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────
@@ -100,7 +98,7 @@ export default function NewMemoryScreen() {
         weekday: weekdayOf(date),
         scene,
         location: location.trim() || undefined,
-        photoStorageIds: photos.map((p) => p.storageId),
+        r2PhotoUrls: photos.map((p) => p.r2Url),
       });
       router.replace(`/memory/${id}`);
     } catch (e: unknown) {
@@ -206,9 +204,9 @@ export default function NewMemoryScreen() {
           ) : (
             <View style={styles.photoGrid}>
               {photos.map((p) => (
-                <View key={p.storageId as string} style={styles.photoThumb}>
+                <View key={p.r2Url} style={styles.photoThumb}>
                   <Image source={{ uri: p.previewUrl }} style={styles.photoImg} />
-                  <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(p.storageId)}>
+                  <TouchableOpacity style={styles.photoRemove} onPress={() => removePhoto(p.r2Url)}>
                     <X size={10} color="#fff" strokeWidth={3} />
                   </TouchableOpacity>
                 </View>

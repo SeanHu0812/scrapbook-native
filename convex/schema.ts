@@ -145,7 +145,8 @@ export default defineSchema({
     .index("by_question", ["questionId"]),
 
   mediaAssets: defineTable({
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    r2Url: v.optional(v.string()),
     uploadedBy: v.id("users"),
     spaceId: v.id("spaces"),
     kind: v.union(v.literal("photo"), v.literal("audio"), v.literal("avatar")),

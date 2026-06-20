@@ -1,7 +1,16 @@
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
+
+async function resolveUrl(
+  ctx: QueryCtx,
+  asset: { storageId?: Id<"_storage"> | null; r2Url?: string | null },
+): Promise<string | null> {
+  if (asset.r2Url) return asset.r2Url;
+  if (asset.storageId) return ctx.storage.getUrl(asset.storageId);
+  return null;
+}
 
 const sceneValidator = v.union(
   v.literal("coffee"), v.literal("couple"), v.literal("sunset"),
@@ -58,9 +67,7 @@ export const list = query({
           .query("mediaAssets")
           .withIndex("by_memory", (q) => q.eq("memoryId", m._id))
           .first();
-        const firstPhotoUrl = firstAsset
-          ? await ctx.storage.getUrl(firstAsset.storageId)
-          : null;
+        const firstPhotoUrl = firstAsset ? await resolveUrl(ctx, firstAsset) : null;
         return { ...m, firstPhotoUrl };
       })
     );
@@ -89,7 +96,7 @@ export const get = query({
     type PhotoEntry = { url: string; storageId: (typeof assets)[number]["storageId"] };
     const photos: PhotoEntry[] = [];
     for (const a of assets.filter((a) => a.kind === "photo")) {
-      const url = await ctx.storage.getUrl(a.storageId);
+      const url = await resolveUrl(ctx, a);
       if (url) photos.push({ url, storageId: a.storageId });
     }
 
@@ -121,7 +128,7 @@ export const listAllPhotos = query({
 
     const result: {
       url: string;
-      storageId: Id<"_storage">;
+      storageId: Id<"_storage"> | null;
       memoryId: Id<"memories"> | null;
       memoryTitle: string;
       date: string;
@@ -133,11 +140,11 @@ export const listAllPhotos = query({
         .withIndex("by_memory", (q) => q.eq("memoryId", memory._id))
         .collect();
       for (const asset of assets.filter((a) => a.kind === "photo")) {
-        const url = await ctx.storage.getUrl(asset.storageId);
+        const url = await resolveUrl(ctx, asset);
         if (url) {
           result.push({
             url,
-            storageId: asset.storageId,
+            storageId: asset.storageId ?? null,
             memoryId: memory._id,
             memoryTitle: memory.title,
             date: memory.date,
@@ -158,11 +165,11 @@ export const listAllPhotos = query({
       .take(500);
 
     for (const asset of standaloneAssets) {
-      const url = await ctx.storage.getUrl(asset.storageId);
+      const url = await resolveUrl(ctx, asset);
       if (url) {
         result.push({
           url,
-          storageId: asset.storageId,
+          storageId: asset.storageId ?? null,
           memoryId: null,
           memoryTitle: "Photo",
           date: new Date(asset._creationTime).toISOString().slice(0, 10),
@@ -175,12 +182,12 @@ export const listAllPhotos = query({
 });
 
 export const uploadToAlbum = mutation({
-  args: { storageIds: v.array(v.id("_storage")) },
-  handler: async (ctx, { storageIds }) => {
+  args: { r2Urls: v.array(v.string()) },
+  handler: async (ctx, { r2Urls }) => {
     const { userId, spaceId } = await requireMembership(ctx);
-    for (const storageId of storageIds) {
+    for (const r2Url of r2Urls) {
       await ctx.db.insert("mediaAssets", {
-        storageId,
+        r2Url,
         uploadedBy: userId,
         spaceId,
         kind: "photo",
@@ -199,13 +206,10 @@ export const create = mutation({
     weekday: v.string(),
     location: v.optional(v.string()),
     scene: sceneValidator,
-    photoStorageIds: v.optional(v.array(v.id("_storage"))),
+    r2PhotoUrls: v.optional(v.array(v.string())),
     audioStorageId: v.optional(v.id("_storage")),
-    // caption: removed — derived from body internally
-    // weather: removed — never set by UI; stored field kept in schema for future use
-    // stickers: removed — feature not active
   },
-  handler: async (ctx, { photoStorageIds, audioStorageId, body, ...args }) => {
+  handler: async (ctx, { r2PhotoUrls, audioStorageId, body, ...args }) => {
     const { userId, spaceId } = await requireMembership(ctx);
 
     const memoryId = await ctx.db.insert("memories", {
@@ -217,9 +221,9 @@ export const create = mutation({
       ...(audioStorageId ? { audioStorageId } : {}),
     });
 
-    for (const storageId of photoStorageIds ?? []) {
+    for (const r2Url of r2PhotoUrls ?? []) {
       await ctx.db.insert("mediaAssets", {
-        storageId,
+        r2Url,
         uploadedBy: userId,
         spaceId,
         kind: "photo",
@@ -234,36 +238,40 @@ export const create = mutation({
 export const addPhotos = mutation({
   args: {
     id: v.id("memories"),
-    photoStorageIds: v.array(v.id("_storage")),
+    r2PhotoUrls: v.array(v.string()),
   },
-  handler: async (ctx, { id, photoStorageIds }) => {
+  handler: async (ctx, { id, r2PhotoUrls }) => {
     const { userId, memory } = await requireMemoryAccess(ctx, id);
-    for (const storageId of photoStorageIds) {
+    for (const r2Url of r2PhotoUrls) {
       await ctx.db.insert("mediaAssets", {
-        storageId,
+        r2Url,
         uploadedBy: userId,
         spaceId: memory.spaceId,
         kind: "photo",
         memoryId: id,
       });
     }
-    if (photoStorageIds.length > 0) {
+    if (r2PhotoUrls.length > 0) {
       await ctx.db.patch(id, { scene: "photo" });
     }
   },
 });
 
 export const removePhoto = mutation({
-  args: { memoryId: v.id("memories"), storageId: v.id("_storage") },
-  handler: async (ctx, { memoryId, storageId }) => {
+  args: { memoryId: v.id("memories"), storageId: v.optional(v.id("_storage")), r2Url: v.optional(v.string()) },
+  handler: async (ctx, { memoryId, storageId, r2Url }) => {
     await requireMemoryAccess(ctx, memoryId);
     const asset = await ctx.db
       .query("mediaAssets")
       .withIndex("by_memory", (q) => q.eq("memoryId", memoryId))
-      .filter((q) => q.eq(q.field("storageId"), storageId))
+      .filter((q) =>
+        storageId
+          ? q.eq(q.field("storageId"), storageId)
+          : q.eq(q.field("r2Url"), r2Url),
+      )
       .first();
     if (asset) {
-      await ctx.storage.delete(storageId); // delete backing file from storage
+      if (asset.storageId) await ctx.storage.delete(asset.storageId);
       await ctx.db.delete(asset._id);
     }
     // .first() is enough — only need to know if any photos remain
@@ -326,7 +334,7 @@ export const remove = mutation({
       .withIndex("by_memory", (q) => q.eq("memoryId", id))
       .collect();
     for (const a of assets) {
-      await ctx.storage.delete(a.storageId);
+      if (a.storageId) await ctx.storage.delete(a.storageId);
       await ctx.db.delete(a._id);
     }
     if (memory.audioStorageId) {
