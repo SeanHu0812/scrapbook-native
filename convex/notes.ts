@@ -66,6 +66,17 @@ export const create = mutation({
   },
 });
 
+export const saveToJournal = mutation({
+  args: { id: v.id("notes") },
+  handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const note = await ctx.db.get(id);
+    if (!note) return;
+    await ctx.db.patch(id, { expiresAt: undefined });
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("notes") },
   handler: async (ctx, { id }) => {
