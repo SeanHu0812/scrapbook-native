@@ -94,6 +94,7 @@ function FABButton() {
         r2Urls.push(r2Url);
       }
       await uploadToAlbum({ r2Urls });
+      router.push("/(tabs)/album");
     } catch {
       Alert.alert("Upload failed", "Something went wrong. Please try again.");
     } finally {

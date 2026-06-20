@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   View, Text, FlatList, TouchableOpacity,
-  Image, StyleSheet, Dimensions,
+  Image, StyleSheet, Dimensions, Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "convex/react";
@@ -20,6 +20,7 @@ type AlbumPhoto = {
   memoryId: Id<"memories"> | null;
   memoryTitle: string;
   date: string;
+  uploadedAt: number;
 };
 
 export default function AlbumScreen() {
@@ -28,30 +29,50 @@ export default function AlbumScreen() {
   const [lightbox, setLightbox] = useState<{
     photos: LightboxPhoto[];
     initialIndex: number;
-    memoryTitle: string;
   } | null>(null);
 
-  // Group memory-attached photos by memoryId for lightbox; standalone photos open alone
-  const byMemory = useMemo(() => {
-    const map = new Map<string, LightboxPhoto[]>();
-    for (const p of photos ?? []) {
-      if (!p.memoryId) continue;
-      const key = p.memoryId as string;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push({ url: p.url, storageId: p.storageId as string | undefined });
+  // ── Per-item entry animation ───────────────────────────────────────────────
+  const animsRef = useRef(new Map<string, Animated.Value>());
+  const loadedRef = useRef(false);
+
+  useEffect(() => {
+    if (!photos) return;
+    if (!loadedRef.current) {
+      // First load — pre-populate map at full opacity, no animation
+      photos.forEach((p) => {
+        if (!animsRef.current.has(p.url)) {
+          animsRef.current.set(p.url, new Animated.Value(1));
+        }
+      });
+      loadedRef.current = true;
     }
-    return map;
   }, [photos]);
 
+  function getAnim(url: string): Animated.Value {
+    if (!animsRef.current.has(url)) {
+      const anim = new Animated.Value(0);
+      animsRef.current.set(url, anim);
+      Animated.spring(anim, {
+        toValue: 1,
+        useNativeDriver: true,
+        bounciness: 8,
+        speed: 14,
+      }).start();
+    }
+    return animsRef.current.get(url)!;
+  }
+
+  // ── Flat lightbox list from all photos ────────────────────────────────────
+  const allLightboxPhotos: LightboxPhoto[] = useMemo(
+    () => (photos ?? []).map((p) => ({ url: p.url })),
+    [photos],
+  );
+
   function openPhoto(photo: AlbumPhoto) {
-    const group = photo.memoryId
-      ? (byMemory.get(photo.memoryId as string) ?? [{ url: photo.url }])
-      : [{ url: photo.url, storageId: photo.storageId as string | undefined }];
-    const initialIndex = group.findIndex((p) => p.url === photo.url);
+    const index = (photos ?? []).findIndex((p) => p.url === photo.url);
     setLightbox({
-      photos: group,
-      initialIndex: Math.max(0, initialIndex),
-      memoryTitle: photo.memoryTitle,
+      photos: allLightboxPhotos,
+      initialIndex: Math.max(0, index),
     });
   }
 
@@ -71,7 +92,6 @@ export default function AlbumScreen() {
       </View>
 
       {isLoading ? (
-        // Skeleton grid
         <FlatList
           data={Array.from({ length: 12 })}
           keyExtractor={(_, i) => String(i)}
@@ -93,15 +113,24 @@ export default function AlbumScreen() {
           numColumns={3}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.grid}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.cell}
-              onPress={() => openPhoto(item)}
-              activeOpacity={0.85}
-            >
-              <Image source={{ uri: item.url }} style={styles.cellImage} resizeMode="cover" />
-            </TouchableOpacity>
-          )}
+          renderItem={({ item }) => {
+            const anim = getAnim(item.url);
+            return (
+              <Animated.View
+                style={[
+                  styles.cell,
+                  { opacity: anim, transform: [{ scale: anim }] },
+                ]}
+              >
+                <TouchableOpacity
+                  onPress={() => openPhoto(item)}
+                  activeOpacity={0.85}
+                >
+                  <Image source={{ uri: item.url }} style={styles.cellImage} resizeMode="cover" />
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          }}
           ItemSeparatorComponent={() => <View style={{ height: GAP }} />}
         />
       )}
@@ -110,7 +139,6 @@ export default function AlbumScreen() {
         visible={!!lightbox}
         photos={lightbox?.photos ?? []}
         initialIndex={lightbox?.initialIndex ?? 0}
-        memoryTitle={lightbox?.memoryTitle}
         onClose={() => setLightbox(null)}
       />
     </SafeAreaView>
