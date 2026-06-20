@@ -16,7 +16,7 @@ const GAP = 1;
 
 type AlbumPhoto = {
   url: string;
-  storageId: Id<"_storage">;
+  storageId: Id<"_storage"> | null;
   memoryId: Id<"memories"> | null;
   memoryTitle: string;
   date: string;
@@ -38,7 +38,7 @@ export default function AlbumScreen() {
       if (!p.memoryId) continue;
       const key = p.memoryId as string;
       if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push({ url: p.url, storageId: p.storageId as string });
+      map.get(key)!.push({ url: p.url, storageId: p.storageId as string | undefined });
     }
     return map;
   }, [photos]);
@@ -46,7 +46,7 @@ export default function AlbumScreen() {
   function openPhoto(photo: AlbumPhoto) {
     const group = photo.memoryId
       ? (byMemory.get(photo.memoryId as string) ?? [{ url: photo.url }])
-      : [{ url: photo.url, storageId: photo.storageId as string }];
+      : [{ url: photo.url, storageId: photo.storageId as string | undefined }];
     const initialIndex = group.findIndex((p) => p.url === photo.url);
     setLightbox({
       photos: group,
@@ -89,7 +89,7 @@ export default function AlbumScreen() {
       ) : (
         <FlatList
           data={photos}
-          keyExtractor={(item) => item.storageId as string}
+          keyExtractor={(item) => item.url}
           numColumns={3}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.grid}
