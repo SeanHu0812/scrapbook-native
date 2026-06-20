@@ -1,5 +1,6 @@
 "use node";
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -17,6 +18,8 @@ function makeClient() {
     },
   });
 }
+
+// ── Public action: generate presigned upload URL for new photos ───────────────
 
 export const generateUploadUrl = action({
   args: { mimeType: v.string() },
@@ -38,5 +41,81 @@ export const generateUploadUrl = action({
     );
 
     return { uploadUrl, r2Url: `${R2_PUBLIC_URL}/${key}` };
+  },
+});
+
+// ── One-time migration action ─────────────────────────────────────────────────
+// Run from the Convex dashboard: Functions → r2:migrateToR2 → Run
+
+export const migrateToR2 = internalAction({
+  args: {},
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  handler: async (ctx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const assets: any[] = await ctx.runQuery(internal.r2Helpers.listLegacyAssets);
+    console.log(`Found ${assets.length} assets to migrate`);
+
+    let migrated = 0;
+    let failed = 0;
+
+    for (const asset of assets) {
+      if (!asset.storageId) continue;
+      try {
+        const url = await ctx.storage.getUrl(asset.storageId);
+        if (!url) {
+          console.warn(`No URL for asset ${asset._id}, skipping`);
+          failed++;
+          continue;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+          console.warn(`Fetch failed for asset ${asset._id}: ${response.status}`);
+          failed++;
+          continue;
+        }
+
+        const buffer = await response.arrayBuffer();
+        const contentType = response.headers.get("content-type") ?? "image/jpeg";
+        const ext = contentType.split("/")[1]?.replace("jpeg", "jpg") ?? "jpg";
+        const key = `photos/migrated-${asset._id}-${Date.now()}.${ext}`;
+
+        const uploadUrl = await getSignedUrl(
+          makeClient(),
+          new PutObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME!,
+            Key: key,
+            ContentType: contentType,
+          }),
+          { expiresIn: 300 },
+        );
+
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          body: buffer,
+          headers: { "Content-Type": contentType },
+        });
+
+        if (!uploadRes.ok) {
+          console.warn(`R2 upload failed for asset ${asset._id}: ${uploadRes.status}`);
+          failed++;
+          continue;
+        }
+
+        await ctx.runMutation(internal.r2Helpers.markMigrated, {
+          assetId: asset._id,
+          r2Url: `${R2_PUBLIC_URL}/${key}`,
+          storageId: asset.storageId,
+        });
+
+        console.log(`Migrated asset ${asset._id} → ${key}`);
+        migrated++;
+      } catch (e) {
+        console.error(`Error migrating asset ${asset._id}:`, e);
+        failed++;
+      }
+    }
+
+    return { total: assets.length, migrated, failed };
   },
 });
