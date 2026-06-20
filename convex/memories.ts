@@ -132,6 +132,7 @@ export const listAllPhotos = query({
       memoryId: Id<"memories"> | null;
       memoryTitle: string;
       date: string;
+      uploadedAt: number;
     }[] = [];
 
     for (const memory of memories) {
@@ -148,6 +149,7 @@ export const listAllPhotos = query({
             memoryId: memory._id,
             memoryTitle: memory.title,
             date: memory.date,
+            uploadedAt: asset._creationTime,
           });
         }
       }
@@ -173,9 +175,12 @@ export const listAllPhotos = query({
           memoryId: null,
           memoryTitle: "Photo",
           date: new Date(asset._creationTime).toISOString().slice(0, 10),
+          uploadedAt: asset._creationTime,
         });
       }
     }
+
+    result.sort((a, b) => b.uploadedAt - a.uploadedAt);
 
     return result;
   },
