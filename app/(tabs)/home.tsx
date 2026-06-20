@@ -1,20 +1,20 @@
 import {
   View, Text, ScrollView, TouchableOpacity, Image, FlatList,
-  StyleSheet, Dimensions, ImageBackground, Modal,
+  StyleSheet, Dimensions, ImageBackground, Modal, Animated, PanResponder,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Bell, ChevronRight, Flag, Heart, BookOpen, CheckSquare } from "lucide-react-native";
+import { Bell, ChevronRight, Flag, Heart, BookOpen, CheckSquare, Trash2 } from "lucide-react-native";
 import { useQuery, useMutation } from "convex/react";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { api } from "@/convex/_generated/api";
 import { useSpace } from "@/lib/useSpace";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { InvitePartnerCard } from "@/components/ui/InvitePartnerCard";
 import { colors } from "@/theme/colors";
 
-const { width: SCREEN_W } = Dimensions.get("window");
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const CARD_W = SCREEN_W - 40;
 
 const CATEGORY_DOODLE: Record<string, ReturnType<typeof require>> = {
@@ -25,9 +25,11 @@ const QUOTE = 'What is the very first thing you noticed about me?';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { status, space, members, invite } = useSpace();
+  const { status, space, members, invite, currentUser } = useSpace();
   const memories = useQuery(api.memories.list) ?? [];
   const allTodos = useQuery(api.todos.list);
+  const recentNotes = useQuery(api.notes.list)?.slice(0, 2) ?? [];
+  const removeNote = useMutation(api.notes.remove);
 
   const sortedTodos = [...(allTodos ?? [])].sort((a, b) => {
     const aDone = a.status === "done";
@@ -42,6 +44,17 @@ export default function HomeScreen() {
   const recentMemories = memories.slice(0, 5);
   const [memoryIndex, setMemoryIndex] = useState(0);
   const [notifVisible, setNotifVisible] = useState(false);
+  const [scrollLocked, setScrollLocked] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+
+  function handleScrollLock(locked: boolean) {
+    setScrollLocked(locked);
+    if (locked) {
+      // Snap to current position to kill any scroll momentum
+      scrollRef.current?.scrollTo({ y: scrollYRef.current, animated: false });
+    }
+  }
 
   // Build activity feed from memories + todos
   const memberMap = Object.fromEntries(members.map((m) => [m.userId, m]));
@@ -72,9 +85,13 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.root}>
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        scrollEnabled={!scrollLocked}
+        scrollEventThrottle={16}
+        onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -128,6 +145,27 @@ export default function HomeScreen() {
 
         {/* Invite card — solo only */}
         {isSolo && invite && <InvitePartnerCard code={invite.code} />}
+
+        {/* Notes */}
+        {recentNotes.length > 0 && (
+          <View style={styles.notesSection}>
+            <Text style={styles.notesSectionTitle}>Notes</Text>
+            {recentNotes.map((note) => {
+              const author = memberMap[(note as any).authorId];
+              const isAuthor = currentUser?._id === (note as any).authorId;
+              return (
+                <DraggableNoteCard
+                  key={note._id as string}
+                  note={note as any}
+                  author={author}
+                  isAuthor={isAuthor}
+                  removeNote={removeNote}
+                  onScrollLock={handleScrollLock}
+                />
+              );
+            })}
+          </View>
+        )}
 
         {/* Recent Memories */}
         <View style={styles.recentSection}>
@@ -345,6 +383,145 @@ function MemoryHeartBtn({ memoryId }: { memoryId: string }) {
   );
 }
 
+type NoteRow = {
+  _id: string;
+  body: string;
+  authorId: string;
+  createdAt: number;
+  expiresAt?: number;
+};
+
+type MemberRow = { userId: string; name: string; avatarPreset?: string; avatarUrl?: string };
+
+function DraggableNoteCard({
+  note, author, isAuthor, removeNote, onScrollLock,
+}: {
+  note: NoteRow;
+  author: MemberRow | undefined;
+  isAuthor: boolean;
+  removeNote: (args: { id: any }) => Promise<any>;
+  onScrollLock: (locked: boolean) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const [trashActive, setTrashActive] = useState(false);
+  const pan = useRef(new Animated.ValueXY()).current;
+  const cardRef = useRef<View>(null);
+  const originRef = useRef({ x: 0, y: 0 });
+  const overTrashRef = useRef(false);
+  const isDragRef = useRef(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trashScale = useRef(new Animated.Value(1)).current;
+  const onScrollLockRef = useRef(onScrollLock);
+  onScrollLockRef.current = onScrollLock;
+
+  const TRASH_THRESHOLD = SCREEN_H - 200;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      // Capture the touch immediately so we own it before the Modal opens
+      onStartShouldSetPanResponder: () => isAuthor,
+      onPanResponderGrant: () => {
+        onScrollLockRef.current(true);
+        // Measure now while finger is still down
+        (cardRef.current as any)?.measure((_: any, __: any, _w: any, _h: any, px: number, py: number) => {
+          originRef.current = { x: px, y: py };
+        });
+        longPressTimer.current = setTimeout(() => {
+          isDragRef.current = true;
+          pan.setValue({ x: 0, y: 0 });
+          setDragging(true);
+        }, 400);
+      },
+      onPanResponderMove: (_, g) => {
+        if (!isDragRef.current) return;
+        pan.setValue({ x: g.dx, y: g.dy });
+        const absY = originRef.current.y + g.dy;
+        const over = absY + 56 > TRASH_THRESHOLD;
+        if (over !== overTrashRef.current) {
+          overTrashRef.current = over;
+          setTrashActive(over);
+          Animated.spring(trashScale, { toValue: over ? 1.4 : 1, useNativeDriver: false }).start();
+        }
+      },
+      onPanResponderRelease: (_, g) => {
+        onScrollLockRef.current(false);
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        if (!isDragRef.current) return; // short tap — ignore
+        isDragRef.current = false;
+        overTrashRef.current = false;
+        setDragging(false);
+        setTrashActive(false);
+        pan.setValue({ x: 0, y: 0 });
+        trashScale.setValue(1);
+        const absY = originRef.current.y + g.dy;
+        if (absY + 56 > TRASH_THRESHOLD) {
+          removeNote({ id: note._id as any });
+        }
+      },
+      onPanResponderTerminate: () => {
+        onScrollLockRef.current(false);
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+        isDragRef.current = false;
+        overTrashRef.current = false;
+        setDragging(false);
+        setTrashActive(false);
+        pan.setValue({ x: 0, y: 0 });
+        trashScale.setValue(1);
+      },
+    })
+  ).current;
+
+  const cardContent = (
+    <>
+      <View style={styles.noteCardLeft}>
+        {author && (
+          <UserAvatar name={author.name} avatarPreset={author.avatarPreset} avatarUrl={author.avatarUrl} size={32} />
+        )}
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.noteCardBody} numberOfLines={2}>{note.body}</Text>
+      </View>
+      <Text style={styles.noteCardTime}>{relativeTime(note.createdAt)}</Text>
+    </>
+  );
+
+  return (
+    <>
+      {/* panHandlers on the original card so the gesture is continuous from long-press */}
+      <View ref={cardRef} {...panResponder.panHandlers}>
+        <View style={[styles.noteCard, dragging && { opacity: 0.3 }]}>
+          {cardContent}
+        </View>
+      </View>
+
+      {dragging && (
+        <Modal transparent animationType="none" onRequestClose={() => {}}>
+          {/* pointerEvents="none" — purely visual; the original card still owns the touch */}
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.3)" }]} />
+
+            <Animated.View
+              style={[styles.noteCard, styles.noteCardFloating, {
+                top: originRef.current.y,
+                transform: pan.getTranslateTransform(),
+              }]}
+            >
+              {cardContent}
+            </Animated.View>
+
+            <View style={styles.trashZone}>
+              <Animated.View style={[styles.trashCircle, { backgroundColor: trashActive ? "#E55E5E" : "#B0A8A0", transform: [{ scale: trashScale }] }]}>
+                <Trash2 size={24} color="#fff" strokeWidth={1.8} />
+              </Animated.View>
+              <Text style={styles.trashLabel}>drop to delete</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
@@ -459,6 +636,35 @@ const styles = StyleSheet.create({
   heroDurationValue: { fontFamily: "Caveat-Bold", fontSize: 32, color: colors.ink, lineHeight: 36 },
   heroDurationSince: { fontFamily: "PatrickHand", fontSize: 14, color: colors.brown + "99" },
 
+
+  // Notes section
+  notesSection: { marginTop: 16, gap: 8 },
+  notesSectionTitle: { fontFamily: "PatrickHand", fontSize: 18, fontWeight: "600", color: colors.ink, marginBottom: 2 },
+  noteCard: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: "#fff", borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  noteCardLeft: { flexShrink: 0 },
+  noteCardBody: { fontFamily: "PatrickHand", fontSize: 15, color: colors.ink, lineHeight: 20 },
+  noteCardTime: { fontFamily: "PatrickHand", fontSize: 12, color: colors.brown + "80", flexShrink: 0 },
+  noteCardFloating: {
+    position: "absolute", left: 20, right: 20,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25, shadowRadius: 16, elevation: 12,
+  },
+  trashZone: {
+    position: "absolute", bottom: 130,
+    alignSelf: "center", alignItems: "center", gap: 6,
+  },
+  trashCircle: {
+    width: 56, height: 56, borderRadius: 28,
+    alignItems: "center", justifyContent: "center",
+  },
+  trashLabel: {
+    fontFamily: "PatrickHand", fontSize: 13,
+    color: "rgba(255,255,255,0.8)",
+  },
 
   // Card spacing
   cardMt: { marginTop: 20 },
