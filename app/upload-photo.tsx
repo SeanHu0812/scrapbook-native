@@ -6,16 +6,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { X, Images, Check } from "lucide-react-native";
-import { useMutation } from "convex/react";
+import { useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { colors } from "@/theme/colors";
 
 export default function UploadPhotoScreen() {
   const router = useRouter();
-  const generateUploadUrl = useMutation(api.users.generateUploadUrl);
+  const generateR2UploadUrl = useAction(api.r2.generateUploadUrl);
   const uploadToAlbum = useMutation(api.memories.uploadToAlbum);
 
   const [previews, setPreviews] = useState<string[]>([]);
@@ -38,19 +37,18 @@ export default function UploadPhotoScreen() {
 
     setUploading(true);
     try {
-      const storageIds: Id<"_storage">[] = [];
+      const r2Urls: string[] = [];
       for (const asset of result.assets) {
         const mimeType = asset.mimeType ?? "image/jpeg";
-        const uploadUrl = await generateUploadUrl();
-        const res = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
-          httpMethod: "POST",
+        const { uploadUrl, r2Url } = await generateR2UploadUrl({ mimeType });
+        await FileSystem.uploadAsync(uploadUrl, asset.uri, {
+          httpMethod: "PUT",
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
           headers: { "Content-Type": mimeType },
         });
-        const { storageId } = JSON.parse(res.body) as { storageId: Id<"_storage"> };
-        storageIds.push(storageId);
+        r2Urls.push(r2Url);
       }
-      await uploadToAlbum({ storageIds });
+      await uploadToAlbum({ r2Urls });
       setDone(true);
     } catch {
       Alert.alert("Upload failed", "Something went wrong. Please try again.");
