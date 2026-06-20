@@ -1,11 +1,11 @@
 import {
-  View, Text, ScrollView, TouchableOpacity, Image, FlatList,
+  View, Text, ScrollView, TouchableOpacity, Pressable, Image, FlatList,
   StyleSheet, Dimensions, ImageBackground, Modal, Animated, PanResponder,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Bell, ChevronRight, Flag, Heart, BookOpen, CheckSquare, Trash2 } from "lucide-react-native";
+import { Bell, ChevronRight, Flag, Heart, BookOpen, CheckSquare, Trash2, Check, X } from "lucide-react-native";
 import { useQuery, useMutation } from "convex/react";
 import { useState, useRef } from "react";
 import { api } from "@/convex/_generated/api";
@@ -404,8 +404,10 @@ function DraggableNoteCard({
 }) {
   const [dragging, setDragging] = useState(false);
   const [trashActive, setTrashActive] = useState(false);
+  const [tapped, setTapped] = useState(false);
+  const saveToJournal = useMutation(api.notes.saveToJournal);
   const pan = useRef(new Animated.ValueXY()).current;
-  const cardRef = useRef<View>(null);
+  const cardRef = useRef<any>(null);
   const originRef = useRef({ x: 0, y: 0 });
   const overTrashRef = useRef(false);
   const isDragRef = useRef(false);
@@ -414,15 +416,27 @@ function DraggableNoteCard({
   const onScrollLockRef = useRef(onScrollLock);
   onScrollLockRef.current = onScrollLock;
 
+  // Ref so PanResponder closure can call the latest handleTap
+  const handleTapRef = useRef<() => void>(() => {});
+  handleTapRef.current = () => {
+    cardRef.current?.measure((_: any, __: any, _w: any, _h: any, _px: number, py: number) => {
+      originRef.current = { ...originRef.current, y: py };
+      setTapped(true);
+    });
+  };
+
+  async function handleSaveToJournal() {
+    setTapped(false);
+    await saveToJournal({ id: note._id as any });
+  }
+
   const TRASH_THRESHOLD = SCREEN_H - 200;
 
   const panResponder = useRef(
     PanResponder.create({
-      // Capture the touch immediately so we own it before the Modal opens
       onStartShouldSetPanResponder: () => isAuthor,
       onPanResponderGrant: () => {
         onScrollLockRef.current(true);
-        // Measure now while finger is still down
         (cardRef.current as any)?.measure((_: any, __: any, _w: any, _h: any, px: number, py: number) => {
           originRef.current = { x: px, y: py };
         });
@@ -446,7 +460,13 @@ function DraggableNoteCard({
       onPanResponderRelease: (_, g) => {
         onScrollLockRef.current(false);
         if (longPressTimer.current) clearTimeout(longPressTimer.current);
-        if (!isDragRef.current) return; // short tap — ignore
+        if (!isDragRef.current) {
+          // Short press — show tap overlay if finger barely moved
+          if (Math.abs(g.dx) < 8 && Math.abs(g.dy) < 8) {
+            handleTapRef.current();
+          }
+          return;
+        }
         isDragRef.current = false;
         overTrashRef.current = false;
         setDragging(false);
@@ -487,19 +507,46 @@ function DraggableNoteCard({
 
   return (
     <>
-      {/* panHandlers on the original card so the gesture is continuous from long-press */}
-      <View ref={cardRef} {...panResponder.panHandlers}>
-        <View style={[styles.noteCard, dragging && { opacity: 0.3 }]}>
-          {cardContent}
+      {/* Author: PanResponder for drag + tap. Non-author: plain pressable for tap. */}
+      {isAuthor ? (
+        <View ref={cardRef} {...panResponder.panHandlers}>
+          <View style={[styles.noteCard, dragging && { opacity: 0.3 }]}>
+            {cardContent}
+          </View>
         </View>
-      </View>
+      ) : (
+        <TouchableOpacity ref={cardRef} activeOpacity={0.85} onPress={() => handleTapRef.current()}>
+          <View style={styles.noteCard}>{cardContent}</View>
+        </TouchableOpacity>
+      )}
 
+      {/* Tap overlay — "Save to journal?" */}
+      {tapped && (
+        <Modal transparent animationType="fade" onRequestClose={() => setTapped(false)}>
+          <Pressable
+            style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.55)" }]}
+            onPress={() => setTapped(false)}
+          />
+          <View style={[styles.noteCardFloating, styles.tapCard, { top: originRef.current.y }]}>
+            <Text style={styles.tapCardTitle}>Save to journal?</Text>
+            <Text style={styles.tapCardBody} numberOfLines={2}>{note.body}</Text>
+            <View style={styles.tapCardBtns}>
+              <TouchableOpacity style={[styles.tapBtn, styles.tapBtnConfirm]} onPress={handleSaveToJournal}>
+                <Check size={22} color="#fff" strokeWidth={2.5} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tapBtn, styles.tapBtnCancel]} onPress={() => setTapped(false)}>
+                <X size={22} color="#fff" strokeWidth={2.5} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Drag overlay — floating card + trash bin */}
       {dragging && (
         <Modal transparent animationType="none" onRequestClose={() => {}}>
-          {/* pointerEvents="none" — purely visual; the original card still owns the touch */}
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.3)" }]} />
-
             <Animated.View
               style={[styles.noteCard, styles.noteCardFloating, {
                 top: originRef.current.y,
@@ -508,7 +555,6 @@ function DraggableNoteCard({
             >
               {cardContent}
             </Animated.View>
-
             <View style={styles.trashZone}>
               <Animated.View style={[styles.trashCircle, { backgroundColor: trashActive ? "#E55E5E" : "#B0A8A0", transform: [{ scale: trashScale }] }]}>
                 <Trash2 size={24} color="#fff" strokeWidth={1.8} />
@@ -665,6 +711,31 @@ const styles = StyleSheet.create({
     fontFamily: "PatrickHand", fontSize: 13,
     color: "rgba(255,255,255,0.8)",
   },
+
+  // Tap overlay
+  tapCard: {
+    position: "absolute", left: 20, right: 20,
+    flexDirection: "column", alignItems: "center",
+    gap: 12, paddingVertical: 20, paddingHorizontal: 16,
+    backgroundColor: "#1C1C2E",
+    borderRadius: 16,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.4, shadowRadius: 20, elevation: 16,
+  },
+  tapCardTitle: {
+    fontFamily: "Caveat-Bold", fontSize: 24, color: "#fff", textAlign: "center",
+  },
+  tapCardBody: {
+    fontFamily: "PatrickHand", fontSize: 14,
+    color: "rgba(255,255,255,0.55)", textAlign: "center",
+  },
+  tapCardBtns: { flexDirection: "row", gap: 20, marginTop: 4 },
+  tapBtn: {
+    width: 54, height: 54, borderRadius: 27,
+    alignItems: "center", justifyContent: "center",
+  },
+  tapBtnConfirm: { backgroundColor: "#4CAF7D" },
+  tapBtnCancel: { backgroundColor: "rgba(255,255,255,0.15)" },
 
   // Card spacing
   cardMt: { marginTop: 20 },
