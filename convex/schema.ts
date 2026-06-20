@@ -165,4 +165,25 @@ export default defineSchema({
     movie: v.optional(v.string()),
     activities: v.optional(v.string()),
   }).index("by_space", ["spaceId"]),
+
+  notes: defineTable({
+    spaceId: v.id("spaces"),
+    authorId: v.id("users"),
+    body: v.string(),
+    template: v.optional(v.string()),
+    createdAt: v.number(),
+    expiresAt: v.optional(v.number()),
+  })
+    .index("by_space", ["spaceId"])
+    .index("by_space_created", ["spaceId", "createdAt"]),
+
+  diaries: defineTable({
+    spaceId: v.id("spaces"),
+    authorId: v.id("users"),
+    title: v.optional(v.string()),
+    body: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_space", ["spaceId"])
+    .index("by_space_created", ["spaceId", "createdAt"]),
 });

@@ -122,7 +122,7 @@ export const listAllPhotos = query({
     const result: {
       url: string;
       storageId: Id<"_storage">;
-      memoryId: Id<"memories">;
+      memoryId: Id<"memories"> | null;
       memoryTitle: string;
       date: string;
     }[] = [];
@@ -146,7 +146,46 @@ export const listAllPhotos = query({
       }
     }
 
+    // Also include standalone photos uploaded directly to album
+    const standaloneAssets = await ctx.db
+      .query("mediaAssets")
+      .withIndex("by_space", (q) => q.eq("spaceId", membership.spaceId))
+      .filter((q) => q.and(
+        q.eq(q.field("kind"), "photo"),
+        q.eq(q.field("memoryId"), undefined),
+      ))
+      .order("desc")
+      .take(500);
+
+    for (const asset of standaloneAssets) {
+      const url = await ctx.storage.getUrl(asset.storageId);
+      if (url) {
+        result.push({
+          url,
+          storageId: asset.storageId,
+          memoryId: null,
+          memoryTitle: "Photo",
+          date: new Date(asset._creationTime).toISOString().slice(0, 10),
+        });
+      }
+    }
+
     return result;
+  },
+});
+
+export const uploadToAlbum = mutation({
+  args: { storageIds: v.array(v.id("_storage")) },
+  handler: async (ctx, { storageIds }) => {
+    const { userId, spaceId } = await requireMembership(ctx);
+    for (const storageId of storageIds) {
+      await ctx.db.insert("mediaAssets", {
+        storageId,
+        uploadedBy: userId,
+        spaceId,
+        kind: "photo",
+      });
+    }
   },
 });
 

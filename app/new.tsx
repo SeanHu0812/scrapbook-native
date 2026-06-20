@@ -190,22 +190,6 @@ export default function NewMemoryScreen() {
           returnKeyType="next"
         />
 
-        {/* Body */}
-        <View style={styles.bodyCard}>
-          <TextInput
-            style={styles.bodyInput}
-            value={body}
-            onChangeText={setBody}
-            placeholder="How was our day? (optional)"
-            placeholderTextColor={colors.brown + "80"}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-          />
-        </View>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
         {/* Photos */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Photos</Text>
@@ -238,6 +222,22 @@ export default function NewMemoryScreen() {
             </View>
           )}
         </View>
+
+        {/* Body */}
+        <View style={[styles.bodyCard, { marginTop: 24 }]}>
+          <TextInput
+            style={styles.bodyInput}
+            value={body}
+            onChangeText={setBody}
+            placeholder="How was our day? (optional)"
+            placeholderTextColor={colors.brown + "80"}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+        </View>
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
 
         {/* Location */}
         <View style={styles.section}>
@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
   bodyCard: {
     backgroundColor: "#fff", borderRadius: 20,
     shadowColor: "#6C5A4E", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8,
-    elevation: 2, padding: 16, marginBottom: 8,
+    elevation: 2, padding: 16,
   },
   bodyInput: {
     fontFamily: "PatrickHand", fontSize: 15, color: colors.ink,

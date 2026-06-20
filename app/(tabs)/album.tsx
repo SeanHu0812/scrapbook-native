@@ -17,7 +17,7 @@ const GAP = 1;
 type AlbumPhoto = {
   url: string;
   storageId: Id<"_storage">;
-  memoryId: Id<"memories">;
+  memoryId: Id<"memories"> | null;
   memoryTitle: string;
   date: string;
 };
@@ -31,10 +31,11 @@ export default function AlbumScreen() {
     memoryTitle: string;
   } | null>(null);
 
-  // Group photos by memoryId so the lightbox shows all photos for that memory
+  // Group memory-attached photos by memoryId for lightbox; standalone photos open alone
   const byMemory = useMemo(() => {
     const map = new Map<string, LightboxPhoto[]>();
     for (const p of photos ?? []) {
+      if (!p.memoryId) continue;
       const key = p.memoryId as string;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push({ url: p.url, storageId: p.storageId as string });
@@ -43,10 +44,12 @@ export default function AlbumScreen() {
   }, [photos]);
 
   function openPhoto(photo: AlbumPhoto) {
-    const memoryPhotos = byMemory.get(photo.memoryId as string) ?? [{ url: photo.url }];
-    const initialIndex = memoryPhotos.findIndex((p) => p.url === photo.url);
+    const group = photo.memoryId
+      ? (byMemory.get(photo.memoryId as string) ?? [{ url: photo.url }])
+      : [{ url: photo.url, storageId: photo.storageId as string }];
+    const initialIndex = group.findIndex((p) => p.url === photo.url);
     setLightbox({
-      photos: memoryPhotos,
+      photos: group,
       initialIndex: Math.max(0, initialIndex),
       memoryTitle: photo.memoryTitle,
     });
